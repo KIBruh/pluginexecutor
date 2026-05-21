@@ -9,6 +9,7 @@ description = "Small Naemon-compatible plugin executor"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "Jinja2>=3.1.0",
   "PyYAML>=6.0",
   "requests>=2.31.0",
 ]

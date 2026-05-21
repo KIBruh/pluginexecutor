@@ -20,6 +20,8 @@ def make_check(**overrides):
         "notification_delay": 0.0,
         "process_perf_data": True,
         "output": "state-change",
+        "template_context": {"host": "host-a", "service": "service-a"},
+        "alert_annotations": {"checkoutput": "{{ output_text }}"},
     }
     values.update(overrides)
     return pluginexecutor.CheckConfig(**values)
@@ -80,6 +82,100 @@ checks:
     )
 
     with pytest.raises(ValueError, match="output"):
+        pluginexecutor.load_config(config_path)
+
+
+def test_load_config_expands_grouped_targets_and_renders_command(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- targets:
+  - host: host-1
+    cluster: prod
+  - host: host-2
+    cluster: prod
+  service: replication
+  command:
+  - /bin/check
+  - --host
+  - "{{ host }}"
+  - --cluster
+  - "{{ cluster }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert len(config.checks) == 2
+    assert config.checks[0].host == "host-1"
+    assert config.checks[0].command == ["/bin/check", "--host", "host-1", "--cluster", "prod"]
+    assert config.checks[1].host == "host-2"
+    assert config.checks[1].template_context["cluster"] == "prod"
+
+
+def test_load_config_rejects_target_key_mismatch(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- targets:
+  - host: host-1
+    cluster: prod
+  - host: host-2
+  service: replication
+  command:
+  - /bin/check
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="exactly these keys"):
+        pluginexecutor.load_config(config_path)
+
+
+def test_load_config_rejects_target_without_host(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- targets:
+  - cluster: prod
+  service: replication
+  command:
+  - /bin/check
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="host"):
+        pluginexecutor.load_config(config_path)
+
+
+def test_load_config_rejects_missing_template_variable(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- host: localhost
+  service: ping
+  command:
+  - /bin/check
+  - "{{ missing }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="failed to render"):
         pluginexecutor.load_config(config_path)
 
 
@@ -158,7 +254,7 @@ def test_build_alert_payload():
     ends_at = starts_at + timedelta(minutes=5)
 
     alert = pluginexecutor.AlertmanagerClient.build_alert(
-        check, "critical", "disk full", starts_at, ends_at
+        check, "critical", {"checkoutput": "disk full"}, starts_at, ends_at
     )
 
     assert alert["labels"]["alertname"] == "PluginCheckFailed"
@@ -224,6 +320,37 @@ def test_update_alert_state_resolves_and_refires_on_severity_change():
     assert alerts[0]["endsAt"] == result.finished_at.isoformat()
     assert alerts[1]["labels"]["status"] == "critical"
     assert "endsAt" not in alerts[1]
+
+
+def test_render_alert_annotations_uses_default_checkoutput_template():
+    check = make_check()
+    result = make_result(status="critical", output_text="disk full")
+
+    annotations = pluginexecutor.render_alert_annotations(
+        check, result, previous_status="ok", alert_status="critical"
+    )
+
+    assert annotations == {"checkoutput": "disk full"}
+
+
+def test_render_alert_annotations_supports_custom_templates():
+    check = make_check(
+        host="db-1",
+        service="replication",
+        template_context={"host": "db-1", "service": "replication", "cluster": "prod"},
+        alert_annotations={
+            "summary": "{{ service }} on {{ host }} is {{ status }}",
+            "description": "cluster={{ cluster }} current={{ current_status }} prev={{ previous_status }} msg={{ output_text }}",
+        },
+    )
+    result = make_result(status="ok", output_text="recovered")
+
+    annotations = pluginexecutor.render_alert_annotations(
+        check, result, previous_status="critical", alert_status="critical"
+    )
+
+    assert annotations["summary"] == "replication on db-1 is critical"
+    assert annotations["description"] == "cluster=prod current=ok prev=critical msg=recovered"
 
 
 def test_execute_check_maps_timeout_to_unknown(monkeypatch):

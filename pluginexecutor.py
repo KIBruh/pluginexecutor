@@ -16,10 +16,15 @@ from typing import Any, Optional, Sequence
 
 import requests
 import yaml
+from jinja2 import Environment, StrictUndefined, TemplateError
 
 
 STATUS_NAMES = ("ok", "warning", "critical", "unknown", "out-of-bounds")
 OUTPUT_POLICIES = frozenset({"always", "state-change", "non-ok", "never"})
+DEFAULT_ALERT_ANNOTATIONS = {"checkoutput": "{{ output_text }}"}
+TEMPLATE_ENVIRONMENT = Environment(autoescape=False, undefined=StrictUndefined)
+INTERNAL_TEMPLATE_CONTEXT_KEY = "__template_context"
+INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 PERFDATA_RE = re.compile(
     r"^(?P<label>'[^']+'|[^=\s]+)="
@@ -77,6 +82,10 @@ class CheckConfig:
     notification_delay: float = 0.0
     process_perf_data: bool = True
     output: str = "state-change"
+    template_context: dict[str, Any] = field(default_factory=dict)
+    alert_annotations: dict[str, str] = field(
+        default_factory=lambda: dict(DEFAULT_ALERT_ANNOTATIONS)
+    )
 
 
 @dataclass(frozen=True)
@@ -138,10 +147,143 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(checks_value, list) or not checks_value:
         raise ValueError("checks must be a non-empty list")
 
-    checks = [parse_check_config(item, index) for index, item in enumerate(checks_value)]
+    normalized_checks = normalize_checks(checks_value)
+    checks = [parse_check_config(item, index) for index, item in enumerate(normalized_checks)]
     metrics = parse_endpoint_config(raw.get("metrics"), "metrics")
     alertmanager = parse_endpoint_config(raw.get("alertmanager"), "alertmanager")
     return AppConfig(checks=checks, metrics=metrics, alertmanager=alertmanager)
+
+
+def normalize_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
+    """Expand grouped checks and render load-time templates."""
+
+    checks: list[dict[str, Any]] = []
+    for index, raw_check in enumerate(raw_checks):
+        field_name = f"checks[{index}]"
+        if not isinstance(raw_check, dict):
+            raise ValueError(f"{field_name} must be a mapping")
+
+        if "targets" in raw_check:
+            checks.extend(expand_grouped_check(raw_check, field_name))
+        else:
+            checks.append(normalize_single_check(raw_check, field_name))
+
+    return checks
+
+
+def expand_grouped_check(raw_check: dict[str, Any], field_name: str) -> list[dict[str, Any]]:
+    """Expand a grouped check with targets into flat check definitions."""
+
+    targets = raw_check.get("targets")
+    if not isinstance(targets, list) or not targets:
+        raise ValueError(f"{field_name}.targets must be a non-empty list")
+
+    base_check = dict(raw_check)
+    base_check.pop("targets", None)
+
+    normalized_targets = [
+        normalize_target(target, field_name, index) for index, target in enumerate(targets)
+    ]
+    expected_keys = set(normalized_targets[0])
+    if "host" not in expected_keys:
+        raise ValueError(f"{field_name}.targets[0].host must be a non-empty string")
+
+    overlap = expected_keys & set(base_check)
+    if overlap:
+        keys = ", ".join(sorted(overlap))
+        raise ValueError(f"{field_name}.targets keys must not overlap parent keys: {keys}")
+
+    checks: list[dict[str, Any]] = []
+    for target_index, target in enumerate(normalized_targets):
+        if set(target) != expected_keys:
+            keys = ", ".join(sorted(expected_keys))
+            raise ValueError(
+                f"{field_name}.targets[{target_index}] must contain exactly these keys: {keys}"
+            )
+
+        merged = {**base_check, **target}
+        checks.append(normalize_single_check(merged, f"{field_name}.targets[{target_index}]"))
+
+    return checks
+
+
+def normalize_target(raw_target: Any, field_name: str, index: int) -> dict[str, Any]:
+    """Validate a target mapping used for grouped check expansion."""
+
+    target_field = f"{field_name}.targets[{index}]"
+    if not isinstance(raw_target, dict):
+        raise ValueError(f"{target_field} must be a mapping")
+
+    target: dict[str, Any] = {}
+    for key, value in raw_target.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"{target_field} keys must be non-empty strings")
+        target[key] = value
+
+    require_non_empty_string(target.get("host"), f"{target_field}.host")
+    return target
+
+
+def normalize_single_check(raw_check: dict[str, Any], field_name: str) -> dict[str, Any]:
+    """Render templates and attach internal metadata for one flat check."""
+
+    context = build_template_context(raw_check)
+    normalized_check = dict(raw_check)
+    normalized_check["command"] = render_command_templates(
+        raw_check.get("command"), context, f"{field_name}.command"
+    )
+    normalized_check[INTERNAL_TEMPLATE_CONTEXT_KEY] = context
+    normalized_check[INTERNAL_ALERT_ANNOTATIONS_KEY] = parse_alert_annotation_templates(
+        raw_check.get("alert_annotations"), f"{field_name}.alert_annotations"
+    )
+    return normalized_check
+
+
+def build_template_context(raw_check: dict[str, Any]) -> dict[str, Any]:
+    """Collect static template variables from a raw check definition."""
+
+    context: dict[str, Any] = {}
+    for key, value in raw_check.items():
+        if key in {"command", "alert_annotations", "targets"}:
+            continue
+        context[key] = value
+    return context
+
+
+def render_command_templates(value: Any, context: dict[str, Any], field_name: str) -> list[str]:
+    """Render Jinja templates in command arguments."""
+
+    command = parse_command(value, field_name)
+    return [
+        render_template(argument, context, f"{field_name}[{index}]")
+        for index, argument in enumerate(command)
+    ]
+
+
+def parse_alert_annotation_templates(value: Any, field_name: str) -> dict[str, str]:
+    """Validate optional alert annotation templates."""
+
+    if value is None:
+        return dict(DEFAULT_ALERT_ANNOTATIONS)
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{field_name} must be a non-empty mapping")
+
+    annotations: dict[str, str] = {}
+    for key, template in value.items():
+        annotation_key = require_non_empty_string(key, f"{field_name} key")
+        annotations[annotation_key] = require_non_empty_string(
+            template, f"{field_name}.{annotation_key}"
+        )
+    return annotations
+
+
+def render_template(template: str, context: dict[str, Any], field_name: str) -> str:
+    """Render a single Jinja template string with strict variable handling."""
+
+    try:
+        return TEMPLATE_ENVIRONMENT.from_string(template).render(context)
+    except TemplateError as exc:
+        raise ValueError(f"failed to render {field_name}: {exc}") from exc
 
 
 def parse_check_config(raw: Any, index: int) -> CheckConfig:
@@ -162,6 +304,14 @@ def parse_check_config(raw: Any, index: int) -> CheckConfig:
         raw.get("process_perf_data", True), f"checks[{index}].process_perf_data"
     )
     output = require_non_empty_string(raw.get("output", "state-change"), f"checks[{index}].output")
+    template_context = require_template_context(
+        raw.get(INTERNAL_TEMPLATE_CONTEXT_KEY, {}),
+        f"checks[{index}].{INTERNAL_TEMPLATE_CONTEXT_KEY}",
+    )
+    alert_annotations = parse_alert_annotation_templates(
+        raw.get(INTERNAL_ALERT_ANNOTATIONS_KEY),
+        f"checks[{index}].alert_annotations",
+    )
 
     if output not in OUTPUT_POLICIES:
         allowed = ", ".join(sorted(OUTPUT_POLICIES))
@@ -176,6 +326,8 @@ def parse_check_config(raw: Any, index: int) -> CheckConfig:
         notification_delay=notification_delay,
         process_perf_data=process_perf_data,
         output=output,
+        template_context=template_context,
+        alert_annotations=alert_annotations,
     )
 
 
@@ -224,6 +376,14 @@ def parse_command(value: Any, field_name: str) -> list[str]:
     for index, item in enumerate(value):
         command.append(require_non_empty_string(item, f"{field_name}[{index}]"))
     return command
+
+
+def require_template_context(value: Any, field_name: str) -> dict[str, Any]:
+    """Ensure the internal template context is a mapping."""
+
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    return dict(value)
 
 
 def require_non_empty_string(value: Any, field_name: str) -> str:
@@ -583,7 +743,7 @@ class AlertmanagerClient:
     def build_alert(
         check: CheckConfig,
         status: str,
-        output_text: str,
+        annotations: dict[str, str],
         starts_at: datetime,
         ends_at: Optional[datetime] = None,
     ) -> dict[str, Any]:
@@ -596,9 +756,7 @@ class AlertmanagerClient:
                 "service": check.service,
                 "status": status,
             },
-            "annotations": {
-                "checkoutput": output_text,
-            },
+            "annotations": annotations,
             "startsAt": starts_at.isoformat(),
         }
         if ends_at is not None:
@@ -719,7 +877,12 @@ class PluginExecutor:
                     AlertmanagerClient.build_alert(
                         check,
                         state.alert_status,
-                        result.output_text,
+                        render_alert_annotations(
+                            check,
+                            result,
+                            previous_status=state.last_status,
+                            alert_status=state.alert_status,
+                        ),
                         state.alert_starts_at or result.finished_at,
                         ends_at=result.finished_at,
                     )
@@ -737,7 +900,12 @@ class PluginExecutor:
                 AlertmanagerClient.build_alert(
                     check,
                     state.alert_status,
-                    result.output_text,
+                    render_alert_annotations(
+                        check,
+                        result,
+                        previous_status=state.last_status,
+                        alert_status=state.alert_status,
+                    ),
                     state.alert_starts_at or state.failing_since,
                     ends_at=result.finished_at,
                 )
@@ -756,12 +924,45 @@ class PluginExecutor:
                     AlertmanagerClient.build_alert(
                         check,
                         result.status,
-                        result.output_text,
+                        render_alert_annotations(
+                            check,
+                            result,
+                            previous_status=state.last_status,
+                            alert_status=result.status,
+                        ),
                         state.alert_starts_at,
                     )
                 )
 
         return alerts
+
+
+def render_alert_annotations(
+    check: CheckConfig,
+    result: CheckResult,
+    previous_status: Optional[str],
+    alert_status: str,
+) -> dict[str, str]:
+    """Render per-check alert annotation templates from runtime state."""
+
+    context = {
+        **check.template_context,
+        "host": check.host,
+        "service": check.service,
+        "status": alert_status,
+        "current_status": result.status,
+        "previous_status": previous_status,
+        "output_text": result.output_text,
+        "exit_code": result.exit_code,
+        "duration": result.duration,
+        "notification_delay": check.notification_delay,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    annotations: dict[str, str] = {}
+    for key, template in check.alert_annotations.items():
+        annotations[key] = render_template(template, context, f"alert_annotations.{key}")
+    return annotations
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:

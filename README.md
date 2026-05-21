@@ -38,6 +38,23 @@ checks:
   process_perf_data: true
   output: state-change
 
+- targets:
+  - host: db-1
+    cluster: prod
+  - host: db-2
+    cluster: prod
+  service: replication
+  command:
+  - /usr/local/bin/check-replication
+  - --host
+  - "{{ host }}"
+  - --cluster
+  - "{{ cluster }}"
+  check_period: 60
+  alert_annotations:
+    summary: "{{ service }} on {{ host }} is {{ status }}"
+    checkoutput: "{{ output_text }}"
+
 metrics:
   enabled: true
   url: https://victoriametrics.example/api/v1/import
@@ -85,6 +102,19 @@ Allowed `output` values:
 - `non-ok`
 - `never`
 
+## Grouped Checks And Templates
+
+Checks may be written either as one flat check per item or as one grouped check with `targets`.
+
+For grouped checks:
+
+- `targets` must be a non-empty list of mappings
+- every target must define `host`
+- every target in the group must have the same set of keys
+- target keys are available to Jinja templates in `command`
+
+Only `command` and `alert_annotations` are templated.
+
 ## Metrics
 
 When `metrics.enabled` is true, the executor POSTs newline-delimited JSON objects to the configured VictoriaMetrics import URL.
@@ -108,5 +138,12 @@ If a check stays non-`ok` for at least `notification_delay`, a firing alert is s
 - `status`
 
 The annotation `checkoutput` contains the plugin output.
+
+`alert_annotations` is optional. If omitted, the executor uses this default:
+
+```yaml
+alert_annotations:
+  checkoutput: "{{ output_text }}"
+```
 
 When the check returns to `ok`, a resolved alert is sent.
