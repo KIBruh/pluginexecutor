@@ -99,10 +99,16 @@ def test_map_exit_code(exit_code, expected):
 
 
 def test_parse_perfdata_supports_quoted_labels():
-    perfdata = pluginexecutor.parse_perfdata("'queue depth'=4ms;10;20 size=1.5GB;2;4 broken=5%;~:10;20")
+    perfdata = pluginexecutor.parse_perfdata(
+        "'queue depth'=4ms;10;20 size=1.5GB;2;4 broken=5%;~:10;20"
+    )
 
-    assert perfdata[0] == pluginexecutor.PerfDatum(label="queue depth", value=4.0, uom="ms", warn=10.0, crit=20.0)
-    assert perfdata[1] == pluginexecutor.PerfDatum(label="size", value=1.5, uom="GB", warn=2.0, crit=4.0)
+    assert perfdata[0] == pluginexecutor.PerfDatum(
+        label="queue depth", value=4.0, uom="ms", warn=10.0, crit=20.0
+    )
+    assert perfdata[1] == pluginexecutor.PerfDatum(
+        label="size", value=1.5, uom="GB", warn=2.0, crit=4.0
+    )
     assert perfdata[2].warn is None
     assert perfdata[2].crit == 20.0
 
@@ -121,7 +127,9 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
     state = pluginexecutor.CheckState(execution_count=3)
     result = make_result(
         status="warning",
-        perfdata=[pluginexecutor.PerfDatum(label="latency", value=1.5, uom="s", warn=3.0, crit=5.0)],
+        perfdata=[
+            pluginexecutor.PerfDatum(label="latency", value=1.5, uom="s", warn=3.0, crit=5.0)
+        ],
     )
 
     lines = pluginexecutor.VictoriaMetricsClient.build_lines(check, state, result)
@@ -135,7 +143,12 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
     assert "check_perf_warn" in names
     assert "check_perf_crit" in names
 
-    warning_status = [payload for payload in payloads if payload["metric"]["__name__"] == "check_status" and payload["metric"]["status"] == "warning"]
+    warning_status = [
+        payload
+        for payload in payloads
+        if payload["metric"]["__name__"] == "check_status"
+        and payload["metric"]["status"] == "warning"
+    ]
     assert warning_status[0]["values"] == [1]
 
 
@@ -144,7 +157,9 @@ def test_build_alert_payload():
     starts_at = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
     ends_at = starts_at + timedelta(minutes=5)
 
-    alert = pluginexecutor.AlertmanagerClient.build_alert(check, "critical", "disk full", starts_at, ends_at)
+    alert = pluginexecutor.AlertmanagerClient.build_alert(
+        check, "critical", "disk full", starts_at, ends_at
+    )
 
     assert alert["labels"]["alertname"] == "PluginCheckFailed"
     assert alert["labels"]["host"] == check.host
@@ -158,13 +173,20 @@ def test_build_alert_payload():
 def test_update_alert_state_honors_notification_delay():
     config = pluginexecutor.AppConfig(
         checks=[make_check(notification_delay=30.0)],
-        alertmanager=pluginexecutor.EndpointConfig(enabled=True, url="https://alertmanager.example"),
+        alertmanager=pluginexecutor.EndpointConfig(
+            enabled=True, url="https://alertmanager.example"
+        ),
     )
     executor = pluginexecutor.PluginExecutor(config, output_stream=io.StringIO())
     check = config.checks[0]
     state = pluginexecutor.CheckState()
-    first_result = make_result(status="critical", finished_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc))
-    second_result = make_result(status="critical", finished_at=datetime(2026, 5, 21, 10, 0, 31, tzinfo=timezone.utc))
+    first_result = make_result(
+        status="critical", finished_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)
+    )
+    second_result = make_result(
+        status="critical",
+        finished_at=datetime(2026, 5, 21, 10, 0, 31, tzinfo=timezone.utc),
+    )
 
     assert executor.update_alert_state(check, state, first_result) == []
     alerts = executor.update_alert_state(check, state, second_result)
@@ -177,7 +199,9 @@ def test_update_alert_state_honors_notification_delay():
 def test_update_alert_state_resolves_and_refires_on_severity_change():
     config = pluginexecutor.AppConfig(
         checks=[make_check(notification_delay=0.0)],
-        alertmanager=pluginexecutor.EndpointConfig(enabled=True, url="https://alertmanager.example"),
+        alertmanager=pluginexecutor.EndpointConfig(
+            enabled=True, url="https://alertmanager.example"
+        ),
     )
     executor = pluginexecutor.PluginExecutor(config, output_stream=io.StringIO())
     check = config.checks[0]
@@ -187,7 +211,11 @@ def test_update_alert_state_resolves_and_refires_on_severity_change():
         alert_status="warning",
         alert_starts_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
     )
-    result = make_result(status="critical", output_text="CRITICAL", finished_at=datetime(2026, 5, 21, 10, 5, tzinfo=timezone.utc))
+    result = make_result(
+        status="critical",
+        output_text="CRITICAL",
+        finished_at=datetime(2026, 5, 21, 10, 5, tzinfo=timezone.utc),
+    )
 
     alerts = executor.update_alert_state(check, state, result)
 
@@ -202,7 +230,9 @@ def test_execute_check_maps_timeout_to_unknown(monkeypatch):
     check = make_check(timeout=5.0)
 
     def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=kwargs.get("args", check.command), timeout=5, output="", stderr="")
+        raise subprocess.TimeoutExpired(
+            cmd=kwargs.get("args", check.command), timeout=5, output="", stderr=""
+        )
 
     monkeypatch.setattr(pluginexecutor.subprocess, "run", fake_run)
 
@@ -231,8 +261,17 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
             self.alerts = alerts
 
     metrics = MetricsStub()
-    executor = pluginexecutor.PluginExecutor(config, metrics_client=metrics, alertmanager_client=AlertStub(), output_stream=output_stream)
-    monkeypatch.setattr(pluginexecutor, "execute_check", lambda _check: make_result(status="ok", output_text="OK"))
+    executor = pluginexecutor.PluginExecutor(
+        config,
+        metrics_client=metrics,
+        alertmanager_client=AlertStub(),
+        output_stream=output_stream,
+    )
+    monkeypatch.setattr(
+        pluginexecutor,
+        "execute_check",
+        lambda _check: make_result(status="ok", output_text="OK"),
+    )
 
     executor.run_once(check, state)
 

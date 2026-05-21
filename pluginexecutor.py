@@ -158,7 +158,9 @@ def parse_check_config(raw: Any, index: int) -> CheckConfig:
     notification_delay = require_non_negative_number(
         raw.get("notification_delay", 0), f"checks[{index}].notification_delay"
     )
-    process_perf_data = require_bool(raw.get("process_perf_data", True), f"checks[{index}].process_perf_data")
+    process_perf_data = require_bool(
+        raw.get("process_perf_data", True), f"checks[{index}].process_perf_data"
+    )
     output = require_non_empty_string(raw.get("output", "state-change"), f"checks[{index}].output")
 
     if output not in OUTPUT_POLICIES:
@@ -452,7 +454,11 @@ def emit_internal_log(message: str, stream: Any = None) -> None:
 
     target = stream or sys.stdout
     timestamp = datetime.now(timezone.utc).isoformat()
-    print(f"timestamp={timestamp} component=pluginexecutor message={json.dumps(message)}", file=target, flush=True)
+    print(
+        f"timestamp={timestamp} component=pluginexecutor message={json.dumps(message)}",
+        file=target,
+        flush=True,
+    )
 
 
 class VictoriaMetricsClient:
@@ -486,7 +492,12 @@ class VictoriaMetricsClient:
         timestamp_ms = int(result.finished_at.timestamp() * 1000)
         base_labels = {"host": check.host, "service": check.service}
         lines = [
-            build_metric_line("check_executions_total", base_labels, state.execution_count, timestamp_ms),
+            build_metric_line(
+                "check_executions_total",
+                base_labels,
+                state.execution_count,
+                timestamp_ms,
+            ),
             build_metric_line("check_duration", base_labels, result.duration, timestamp_ms),
         ]
 
@@ -507,16 +518,24 @@ class VictoriaMetricsClient:
                     "perf_label": datum.label,
                     "uom": datum.uom,
                 }
-                lines.append(build_metric_line("check_perf_value", labels, datum.value, timestamp_ms))
+                lines.append(
+                    build_metric_line("check_perf_value", labels, datum.value, timestamp_ms)
+                )
                 if datum.warn is not None:
-                    lines.append(build_metric_line("check_perf_warn", labels, datum.warn, timestamp_ms))
+                    lines.append(
+                        build_metric_line("check_perf_warn", labels, datum.warn, timestamp_ms)
+                    )
                 if datum.crit is not None:
-                    lines.append(build_metric_line("check_perf_crit", labels, datum.crit, timestamp_ms))
+                    lines.append(
+                        build_metric_line("check_perf_crit", labels, datum.crit, timestamp_ms)
+                    )
 
         return lines
 
 
-def build_metric_line(name: str, labels: dict[str, str], value: float | int, timestamp_ms: int) -> str:
+def build_metric_line(
+    name: str, labels: dict[str, str], value: float | int, timestamp_ms: int
+) -> str:
     """Encode a single VictoriaMetrics JSON-line sample."""
 
     return json.dumps(
@@ -677,7 +696,9 @@ class PluginExecutor:
         state.last_output = result.output_text
         return result
 
-    def update_alert_state(self, check: CheckConfig, state: CheckState, result: CheckResult) -> list[dict[str, Any]]:
+    def update_alert_state(
+        self, check: CheckConfig, state: CheckState, result: CheckResult
+    ) -> list[dict[str, Any]]:
         """Update in-memory alert state and build any Alertmanager payloads."""
 
         if not self.config.alertmanager.enabled:
