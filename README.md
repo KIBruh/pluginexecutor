@@ -91,7 +91,9 @@ Exit codes map to states as follows:
 - `>3` => `out-of-bounds`
 - timeout or process start failure => `unknown`
 
-Each check runs immediately at startup and then repeats every `check_period` seconds.
+Each check runs immediately at startup and then repeats roughly every `check_period`
+seconds with a random jitter of plus or minus `1%` of `check_period`, capped at `5`
+seconds.
 
 ## Output Policy
 
@@ -125,6 +127,15 @@ Per run it emits:
 - `check_status{status,host,service}` for each supported status
 - `check_duration{host,service}`
 - perfdata metrics when perfdata exists and `process_perf_data` is true
+
+Plugin perfdata is collected from every `|` segment in the plugin output, including
+multi-line output. The executor emits:
+
+- `check_perf_value{host,service,perf_label,uom}`
+- `check_perf_warn{host,service,perf_label,uom}` when warn is a plain numeric threshold
+- `check_perf_crit{host,service,perf_label,uom}` when crit is a plain numeric threshold
+- `check_perf_min{host,service,perf_label,uom}` when min is present and numeric
+- `check_perf_max{host,service,perf_label,uom}` when max is present and numeric
 
 ## Alerts
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import subprocess
 import sys
@@ -25,6 +26,8 @@ DEFAULT_ALERT_ANNOTATIONS = {"checkoutput": "{{ output_text }}"}
 TEMPLATE_ENVIRONMENT = Environment(autoescape=False, undefined=StrictUndefined)
 INTERNAL_TEMPLATE_CONTEXT_KEY = "__template_context"
 INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
+MAX_SCHEDULING_JITTER_SECONDS = 5.0
+SCHEDULING_JITTER_RATIO = 0.01
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 PERFDATA_RE = re.compile(
     r"^(?P<label>'[^']+'|[^=\s]+)="
@@ -106,6 +109,8 @@ class PerfDatum:
     uom: str = ""
     warn: Optional[float] = None
     crit: Optional[float] = None
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
 
 
 @dataclass
@@ -442,6 +447,16 @@ def map_exit_code(exit_code: Optional[int]) -> str:
     return "out-of-bounds"
 
 
+def compute_check_interval(check_period: float) -> float:
+    """Return the next scheduling interval with bounded random jitter."""
+
+    jitter = min(MAX_SCHEDULING_JITTER_SECONDS, check_period * SCHEDULING_JITTER_RATIO)
+    return max(
+        0.0,
+        check_period + random.uniform(-jitter, jitter),
+    )
+
+
 def normalize_text(value: str | bytes | None) -> str:
     """Normalize subprocess output into UTF-8 text."""
 
@@ -511,15 +526,23 @@ def parse_plugin_stdout(stdout: str) -> tuple[str, list[PerfDatum]]:
     if not lines:
         return "", []
 
-    first_line = lines[0]
-    message = first_line
-    perfdata_text = ""
-    if "|" in first_line:
-        message, perfdata_text = first_line.split("|", 1)
-    extra_output = [line.strip() for line in lines[1:] if line.strip()]
-    parts = [message.strip()] + extra_output
+    output_parts: list[str] = []
+    perfdata_parts: list[str] = []
+    for line in lines:
+        text_part = line
+        perfdata_part = ""
+        if "|" in line:
+            text_part, perfdata_part = line.split("|", 1)
+        text_part = text_part.strip()
+        if text_part:
+            output_parts.append(text_part)
+        perfdata_part = perfdata_part.strip()
+        if perfdata_part:
+            perfdata_parts.append(perfdata_part)
+
+    parts = output_parts
     output_text = " ; ".join(part for part in parts if part)
-    perfdata = parse_perfdata(perfdata_text)
+    perfdata = parse_perfdata(" ".join(perfdata_parts))
     return output_text, perfdata
 
 
@@ -539,8 +562,10 @@ def parse_perfdata(perfdata_text: str) -> list[PerfDatum]:
                 label=label,
                 value=float(match.group("value")),
                 uom=match.group("uom") or "",
-                warn=parse_threshold(match.group("warn")),
-                crit=parse_threshold(match.group("crit")),
+                warn=parse_numeric_perf_field(match.group("warn")),
+                crit=parse_numeric_perf_field(match.group("crit")),
+                minimum=parse_numeric_perf_field(match.group("minimum")),
+                maximum=parse_numeric_perf_field(match.group("maximum")),
             )
         )
     return perfdata
@@ -568,8 +593,8 @@ def split_perfdata_tokens(perfdata_text: str) -> list[str]:
     return tokens
 
 
-def parse_threshold(value: Optional[str]) -> Optional[float]:
-    """Parse simple numeric warn/crit thresholds when available."""
+def parse_numeric_perf_field(value: Optional[str]) -> Optional[float]:
+    """Parse a perfdata field only when it is a plain numeric scalar."""
 
     if not value:
         return None
@@ -688,6 +713,14 @@ class VictoriaMetricsClient:
                 if datum.crit is not None:
                     lines.append(
                         build_metric_line("check_perf_crit", labels, datum.crit, timestamp_ms)
+                    )
+                if datum.minimum is not None:
+                    lines.append(
+                        build_metric_line("check_perf_min", labels, datum.minimum, timestamp_ms)
+                    )
+                if datum.maximum is not None:
+                    lines.append(
+                        build_metric_line("check_perf_max", labels, datum.maximum, timestamp_ms)
                     )
 
         return lines
@@ -819,9 +852,9 @@ class PluginExecutor:
                 break
 
             self.run_once(check, state)
-            next_run += check.check_period
+            next_run += compute_check_interval(check.check_period)
             while next_run <= time.monotonic():
-                next_run += check.check_period
+                next_run += compute_check_interval(check.check_period)
 
     def run_once(self, check: CheckConfig, state: CheckState) -> CheckResult:
         """Execute one check and process logging, metrics, and alerts."""

@@ -194,19 +194,94 @@ def test_map_exit_code(exit_code, expected):
     assert pluginexecutor.map_exit_code(exit_code) == expected
 
 
+def test_compute_check_interval_applies_bounded_jitter(monkeypatch):
+    calls = []
+
+    def fake_uniform(low, high):
+        calls.append((low, high))
+        return 0.6
+
+    monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
+
+    assert pluginexecutor.compute_check_interval(60.0) == 60.6
+    assert calls == [(-0.6, 0.6)]
+
+
+def test_compute_check_interval_caps_jitter_at_five_seconds(monkeypatch):
+    calls = []
+
+    def fake_uniform(low, high):
+        calls.append((low, high))
+        return 5.0
+
+    monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
+
+    assert pluginexecutor.compute_check_interval(1000.0) == 1005.0
+    assert calls == [(-5.0, 5.0)]
+
+
+def test_compute_check_interval_never_returns_negative(monkeypatch):
+    monkeypatch.setattr(pluginexecutor.random, "uniform", lambda low, high: -0.01)
+
+    assert pluginexecutor.compute_check_interval(1.0) == 0.99
+
+
 def test_parse_perfdata_supports_quoted_labels():
     perfdata = pluginexecutor.parse_perfdata(
-        "'queue depth'=4ms;10;20 size=1.5GB;2;4 broken=5%;~:10;20"
+        "'queue depth'=4ms;10;20;;30 size=1.5GB;2;4;0;8 broken=5%;~:10;20"
     )
 
     assert perfdata[0] == pluginexecutor.PerfDatum(
-        label="queue depth", value=4.0, uom="ms", warn=10.0, crit=20.0
+        label="queue depth", value=4.0, uom="ms", warn=10.0, crit=20.0, maximum=30.0
     )
     assert perfdata[1] == pluginexecutor.PerfDatum(
-        label="size", value=1.5, uom="GB", warn=2.0, crit=4.0
+        label="size", value=1.5, uom="GB", warn=2.0, crit=4.0, minimum=0.0, maximum=8.0
     )
     assert perfdata[2].warn is None
     assert perfdata[2].crit == 20.0
+
+
+def test_parse_plugin_stdout_collects_perfdata_from_all_pipe_segments():
+    output_text, perfdata = pluginexecutor.parse_plugin_stdout(
+        "DISK OK - free space: / 3326 MB (56%); | /=2643MB;5948;5958;0;5968\n"
+        "/boot 68 MB (69%); | /boot=68MB;88;93;0;98\n"
+        "/home 69357 MB (27%);\n"
+        "/var/log 819 MB (84%); | /var/log=818MB;970;975;0;980\n"
+    )
+
+    assert output_text == (
+        "DISK OK - free space: / 3326 MB (56%); ; /boot 68 MB (69%); ; /home 69357 MB (27%); ; "
+        "/var/log 819 MB (84%);"
+    )
+    assert [datum.label for datum in perfdata] == ["/", "/boot", "/var/log"]
+    assert perfdata[0].minimum == 0.0
+    assert perfdata[0].maximum == 5968.0
+
+
+def test_parse_plugin_stdout_handles_perfdata_only_on_later_lines():
+    output_text, perfdata = pluginexecutor.parse_plugin_stdout(
+        "PING OK\nRTA summary | rta=0.80ms;1;2;0;5\n"
+    )
+
+    assert output_text == "PING OK ; RTA summary"
+    assert len(perfdata) == 1
+    assert perfdata[0].label == "rta"
+
+
+def test_parse_perfdata_ignores_range_thresholds_for_numeric_metrics():
+    perfdata = pluginexecutor.parse_perfdata("latency=5ms;10:;@20:30;0;60")
+
+    assert perfdata == [
+        pluginexecutor.PerfDatum(
+            label="latency",
+            value=5.0,
+            uom="ms",
+            warn=None,
+            crit=None,
+            minimum=0.0,
+            maximum=60.0,
+        )
+    ]
 
 
 def test_should_log_output():
@@ -224,7 +299,15 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
     result = make_result(
         status="warning",
         perfdata=[
-            pluginexecutor.PerfDatum(label="latency", value=1.5, uom="s", warn=3.0, crit=5.0)
+            pluginexecutor.PerfDatum(
+                label="latency",
+                value=1.5,
+                uom="s",
+                warn=3.0,
+                crit=5.0,
+                minimum=0.0,
+                maximum=10.0,
+            )
         ],
     )
 
@@ -238,6 +321,13 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
     assert "check_perf_value" in names
     assert "check_perf_warn" in names
     assert "check_perf_crit" in names
+    assert "check_perf_min" in names
+    assert "check_perf_max" in names
+
+    perf_warn = [
+        payload for payload in payloads if payload["metric"]["__name__"] == "check_perf_warn"
+    ]
+    assert perf_warn[0]["values"] == [3.0]
 
     warning_status = [
         payload
@@ -246,6 +336,33 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
         and payload["metric"]["status"] == "warning"
     ]
     assert warning_status[0]["values"] == [1]
+
+
+def test_build_victoriametrics_lines_skip_non_numeric_warn_and_crit():
+    check = make_check()
+    state = pluginexecutor.CheckState(execution_count=1)
+    result = make_result(
+        perfdata=[
+            pluginexecutor.PerfDatum(
+                label="latency",
+                value=1.5,
+                uom="s",
+                warn=None,
+                crit=None,
+                minimum=0.0,
+                maximum=10.0,
+            )
+        ]
+    )
+
+    lines = pluginexecutor.VictoriaMetricsClient.build_lines(check, state, result)
+    names = {json.loads(line)["metric"]["__name__"] for line in lines}
+
+    assert "check_perf_value" in names
+    assert "check_perf_min" in names
+    assert "check_perf_max" in names
+    assert "check_perf_warn" not in names
+    assert "check_perf_crit" not in names
 
 
 def test_build_alert_payload():
