@@ -1,0 +1,42 @@
+# AGENTS.md
+
+## Commands
+
+- Install runtime deps: `pip install -e .`
+- Install test deps: `pip install -e .[dev]`
+- Run the daemon directly: `python pluginexecutor.py /path/to/config.yaml`
+- Run via console script after install: `pluginexecutor /path/to/config.yaml`
+- Run all tests: `pytest`
+- Run a focused test: `pytest tests/test_pluginexecutor.py -k <pattern>`
+
+## Repo Shape
+
+- The whole app lives in `pluginexecutor.py`. There is no package directory split yet.
+- Tests are concentrated in `tests/test_pluginexecutor.py`; if you change parsing, scheduling, metrics, or alert behavior, update that file.
+- `pyproject.toml` is minimal: setuptools build, console script entrypoint `pluginexecutor:main`, and pytest configured to use `tests/`.
+
+## Runtime Model
+
+- `load_config()` expands grouped `checks[*].targets` into flat checks before runtime. One grouped check can turn into many actual worker checks.
+- `PluginExecutor.run()` starts one thread per expanded check. This is the main scaling constraint.
+- Scheduling is fixed-cadence with jitter, not fixed-delay: each next run is advanced by `check_period` plus random jitter of `+/- 1%`, capped at `5s`.
+- Checks for the same expanded item never overlap, but different checks run independently.
+
+## Config And Templating
+
+- Only `command` and `alert_annotations` are Jinja-templated.
+- Jinja uses `StrictUndefined`; missing template variables fail config load immediately.
+- Grouped `targets` require every target to have the same key set, and every target must include `host`.
+- Default alert annotations are injected when omitted: `checkoutput: "{{ output_text }}"`.
+
+## Metrics And Perfdata
+
+- VictoriaMetrics output is sent as newline-delimited JSON to the configured import URL.
+- Plugin perfdata is collected from every `|` segment across multi-line plugin output, not just the first line.
+- `warn` and `crit` perfdata metrics are emitted only when the threshold is a plain numeric scalar. Nagios range expressions parse, but do not produce numeric warn/crit metrics.
+- Numeric `min` and `max` perfdata fields emit `check_perf_min` and `check_perf_max`.
+
+## Scaling
+
+- Read `SCALING.md` before changing the concurrency model. The current design is intended for dozens to low hundreds of checks, not thousands.
+- Because the app uses one thread per expanded check and synchronous subprocess/HTTP work, changes that increase expanded check count or per-check latency have immediate scaling impact.
