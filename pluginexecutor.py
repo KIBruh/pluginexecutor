@@ -29,9 +29,10 @@ INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
 MAX_SCHEDULING_JITTER_SECONDS = 5.0
 SCHEDULING_JITTER_RATIO = 0.01
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+RANGE_NUMBER_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)")
 PERFDATA_RE = re.compile(
     r"^(?P<label>'[^']+'|[^=\s]+)="
-    r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+    r"(?P<value>U|[+-]?(?:\d+(?:[\.,]\d*)?|[\.,]\d+))"
     r"(?P<uom>[^;\s]*)"
     r"(?:;(?P<warn>[^;]*))?"
     r"(?:;(?P<crit>[^;]*))?"
@@ -109,6 +110,12 @@ class PerfDatum:
     uom: str = ""
     warn: Optional[float] = None
     crit: Optional[float] = None
+    warn_min: Optional[float] = None
+    warn_max: Optional[float] = None
+    warn_fill: Optional[str] = None
+    crit_min: Optional[float] = None
+    crit_max: Optional[float] = None
+    crit_fill: Optional[str] = None
     minimum: Optional[float] = None
     maximum: Optional[float] = None
 
@@ -554,16 +561,27 @@ def parse_perfdata(perfdata_text: str) -> list[PerfDatum]:
         match = PERFDATA_RE.match(token)
         if not match:
             continue
+        value_text = normalize_perf_number(match.group("value"))
+        if value_text is None:
+            continue
         label = match.group("label")
         if label.startswith("'") and label.endswith("'"):
             label = label[1:-1]
+        warn = parse_perf_threshold(match.group("warn"))
+        crit = parse_perf_threshold(match.group("crit"))
         perfdata.append(
             PerfDatum(
                 label=label,
-                value=float(match.group("value")),
+                value=float(value_text),
                 uom=match.group("uom") or "",
-                warn=parse_numeric_perf_field(match.group("warn")),
-                crit=parse_numeric_perf_field(match.group("crit")),
+                warn=warn["value"],
+                crit=crit["value"],
+                warn_min=warn["minimum"],
+                warn_max=warn["maximum"],
+                warn_fill=warn["fill"],
+                crit_min=crit["minimum"],
+                crit_max=crit["maximum"],
+                crit_fill=crit["fill"],
                 minimum=parse_numeric_perf_field(match.group("minimum")),
                 maximum=parse_numeric_perf_field(match.group("maximum")),
             )
@@ -598,10 +616,77 @@ def parse_numeric_perf_field(value: Optional[str]) -> Optional[float]:
 
     if not value:
         return None
-    stripped = value.strip()
-    if NUMERIC_RE.match(stripped):
+    stripped = normalize_perf_number(value)
+    if stripped is not None:
         return float(stripped)
     return None
+
+
+def normalize_perf_number(value: Optional[str]) -> Optional[str]:
+    """Normalize a perfdata numeric string to Python float format."""
+
+    if not value:
+        return None
+    stripped = value.strip().replace(",", ".")
+    if stripped == "U":
+        return None
+    if NUMERIC_RE.match(stripped):
+        return stripped
+    return None
+
+
+def parse_perf_threshold(value: Optional[str]) -> dict[str, Optional[float] | Optional[str]]:
+    """Parse scalar or range perfdata thresholds into structured bounds."""
+
+    parsed: dict[str, Optional[float] | Optional[str]] = {
+        "value": None,
+        "minimum": None,
+        "maximum": None,
+        "fill": None,
+    }
+    if not value:
+        return parsed
+
+    stripped = value.strip().replace(",", ".")
+    if not stripped:
+        return parsed
+
+    if NUMERIC_RE.match(stripped):
+        parsed["value"] = float(stripped)
+        parsed["fill"] = "none"
+        return parsed
+
+    fill = "outer"
+    range_text = stripped
+    if range_text.startswith("@"):
+        fill = "inner"
+        range_text = range_text[1:]
+
+    if ":" not in range_text:
+        return parsed
+
+    lower_text, upper_text = range_text.split(":", 1)
+    lower = parse_perf_range_bound(lower_text, allow_infinite_low=True)
+    upper = parse_perf_range_bound(upper_text, allow_infinite_low=False)
+    if lower is None and upper is None:
+        return parsed
+
+    parsed["minimum"] = lower
+    parsed["maximum"] = upper
+    parsed["fill"] = fill
+    return parsed
+
+
+def parse_perf_range_bound(value: str, *, allow_infinite_low: bool) -> Optional[float]:
+    """Parse one perfdata range bound, treating `~` as unbounded."""
+
+    stripped = value.strip()
+    if not stripped or (allow_infinite_low and stripped == "~"):
+        return None
+    match = RANGE_NUMBER_RE.search(stripped)
+    if not match:
+        return None
+    return float(match.group(0))
 
 
 def should_log_output(policy: str, previous_status: Optional[str], current_status: str) -> bool:
@@ -708,11 +793,57 @@ class VictoriaMetricsClient:
                 )
                 if datum.warn is not None:
                     lines.append(
-                        build_metric_line("check_perf_warn", labels, datum.warn, timestamp_ms)
+                        build_metric_line(
+                            "check_perf_warn",
+                            {**labels, "threshold_fill": datum.warn_fill or "none"},
+                            datum.warn,
+                            timestamp_ms,
+                        )
                     )
                 if datum.crit is not None:
                     lines.append(
-                        build_metric_line("check_perf_crit", labels, datum.crit, timestamp_ms)
+                        build_metric_line(
+                            "check_perf_crit",
+                            {**labels, "threshold_fill": datum.crit_fill or "none"},
+                            datum.crit,
+                            timestamp_ms,
+                        )
+                    )
+                if datum.warn_min is not None:
+                    lines.append(
+                        build_metric_line(
+                            "check_perf_warn_min",
+                            {**labels, "threshold_fill": datum.warn_fill or "outer"},
+                            datum.warn_min,
+                            timestamp_ms,
+                        )
+                    )
+                if datum.warn_max is not None:
+                    lines.append(
+                        build_metric_line(
+                            "check_perf_warn_max",
+                            {**labels, "threshold_fill": datum.warn_fill or "outer"},
+                            datum.warn_max,
+                            timestamp_ms,
+                        )
+                    )
+                if datum.crit_min is not None:
+                    lines.append(
+                        build_metric_line(
+                            "check_perf_crit_min",
+                            {**labels, "threshold_fill": datum.crit_fill or "outer"},
+                            datum.crit_min,
+                            timestamp_ms,
+                        )
+                    )
+                if datum.crit_max is not None:
+                    lines.append(
+                        build_metric_line(
+                            "check_perf_crit_max",
+                            {**labels, "threshold_fill": datum.crit_fill or "outer"},
+                            datum.crit_max,
+                            timestamp_ms,
+                        )
                     )
                 if datum.minimum is not None:
                     lines.append(

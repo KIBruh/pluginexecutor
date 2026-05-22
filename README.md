@@ -132,10 +132,16 @@ Plugin perfdata is collected from every `|` segment in the plugin output, includ
 multi-line output. The executor emits:
 
 - `check_perf_value{host,service,perf_label,uom}`
-- `check_perf_warn{host,service,perf_label,uom}` when warn is a plain numeric threshold
-- `check_perf_crit{host,service,perf_label,uom}` when crit is a plain numeric threshold
+- `check_perf_warn{host,service,perf_label,uom,threshold_fill="none"}` when warn is a plain numeric threshold
+- `check_perf_crit{host,service,perf_label,uom,threshold_fill="none"}` when crit is a plain numeric threshold
+- `check_perf_warn_min{host,service,perf_label,uom,threshold_fill}` and `check_perf_warn_max{host,service,perf_label,uom,threshold_fill}` when warn uses Nagios range syntax
+- `check_perf_crit_min{host,service,perf_label,uom,threshold_fill}` and `check_perf_crit_max{host,service,perf_label,uom,threshold_fill}` when crit uses Nagios range syntax
 - `check_perf_min{host,service,perf_label,uom}` when min is present and numeric
 - `check_perf_max{host,service,perf_label,uom}` when max is present and numeric
+
+`threshold_fill` is `none` for scalar thresholds, `outer` for normal ranges, and
+`inner` for `@`-prefixed ranges. Open-ended ranges emit only the bound that exists.
+Perfdata values of `U` are still ignored.
 
 ## Alerts
 

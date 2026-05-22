@@ -33,7 +33,9 @@
 
 - VictoriaMetrics output is sent as newline-delimited JSON to the configured import URL.
 - Plugin perfdata is collected from every `|` segment across multi-line plugin output, not just the first line.
-- `warn` and `crit` perfdata metrics are emitted only when the threshold is a plain numeric scalar. Nagios range expressions parse, but do not produce numeric warn/crit metrics.
+- Scalar `warn` and `crit` perfdata thresholds emit `check_perf_warn` and `check_perf_crit` with `threshold_fill=none`.
+- Nagios range thresholds emit bound metrics: `check_perf_warn_min/max` and `check_perf_crit_min/max`, with `threshold_fill=outer` or `inner` for `@`-prefixed ranges.
+- Open-ended Nagios ranges emit only the bound that exists; perfdata values of `U` are ignored.
 - Numeric `min` and `max` perfdata fields emit `check_perf_min` and `check_perf_max`.
 
 ## Scaling

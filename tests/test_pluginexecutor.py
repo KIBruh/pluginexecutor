@@ -232,13 +232,31 @@ def test_parse_perfdata_supports_quoted_labels():
     )
 
     assert perfdata[0] == pluginexecutor.PerfDatum(
-        label="queue depth", value=4.0, uom="ms", warn=10.0, crit=20.0, maximum=30.0
+        label="queue depth",
+        value=4.0,
+        uom="ms",
+        warn=10.0,
+        crit=20.0,
+        warn_fill="none",
+        crit_fill="none",
+        maximum=30.0,
     )
     assert perfdata[1] == pluginexecutor.PerfDatum(
-        label="size", value=1.5, uom="GB", warn=2.0, crit=4.0, minimum=0.0, maximum=8.0
+        label="size",
+        value=1.5,
+        uom="GB",
+        warn=2.0,
+        crit=4.0,
+        warn_fill="none",
+        crit_fill="none",
+        minimum=0.0,
+        maximum=8.0,
     )
     assert perfdata[2].warn is None
+    assert perfdata[2].warn_max == 10.0
+    assert perfdata[2].warn_fill == "outer"
     assert perfdata[2].crit == 20.0
+    assert perfdata[2].crit_fill == "none"
 
 
 def test_parse_plugin_stdout_collects_perfdata_from_all_pipe_segments():
@@ -268,7 +286,7 @@ def test_parse_plugin_stdout_handles_perfdata_only_on_later_lines():
     assert perfdata[0].label == "rta"
 
 
-def test_parse_perfdata_ignores_range_thresholds_for_numeric_metrics():
+def test_parse_perfdata_supports_range_thresholds_for_numeric_metrics():
     perfdata = pluginexecutor.parse_perfdata("latency=5ms;10:;@20:30;0;60")
 
     assert perfdata == [
@@ -278,8 +296,32 @@ def test_parse_perfdata_ignores_range_thresholds_for_numeric_metrics():
             uom="ms",
             warn=None,
             crit=None,
+            warn_min=10.0,
+            warn_fill="outer",
+            crit_min=20.0,
+            crit_max=30.0,
+            crit_fill="inner",
             minimum=0.0,
             maximum=60.0,
+        )
+    ]
+
+
+def test_parse_perfdata_normalizes_comma_decimals_and_open_upper_ranges():
+    perfdata = pluginexecutor.parse_perfdata("temp=54,2C;40,5:60,5;70,0:;0;100")
+
+    assert perfdata == [
+        pluginexecutor.PerfDatum(
+            label="temp",
+            value=54.2,
+            uom="C",
+            warn_min=40.5,
+            warn_max=60.5,
+            warn_fill="outer",
+            crit_min=70.0,
+            crit_fill="outer",
+            minimum=0.0,
+            maximum=100.0,
         )
     ]
 
@@ -305,6 +347,8 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
                 uom="s",
                 warn=3.0,
                 crit=5.0,
+                warn_fill="none",
+                crit_fill="none",
                 minimum=0.0,
                 maximum=10.0,
             )
@@ -328,6 +372,7 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
         payload for payload in payloads if payload["metric"]["__name__"] == "check_perf_warn"
     ]
     assert perf_warn[0]["values"] == [3.0]
+    assert perf_warn[0]["metric"]["threshold_fill"] == "none"
 
     warning_status = [
         payload
@@ -363,6 +408,45 @@ def test_build_victoriametrics_lines_skip_non_numeric_warn_and_crit():
     assert "check_perf_max" in names
     assert "check_perf_warn" not in names
     assert "check_perf_crit" not in names
+
+
+def test_build_victoriametrics_lines_include_threshold_ranges():
+    check = make_check()
+    state = pluginexecutor.CheckState(execution_count=1)
+    result = make_result(
+        perfdata=[
+            pluginexecutor.PerfDatum(
+                label="latency",
+                value=1.5,
+                uom="s",
+                warn_min=10.0,
+                warn_fill="outer",
+                crit_min=20.0,
+                crit_max=30.0,
+                crit_fill="inner",
+            )
+        ]
+    )
+
+    lines = pluginexecutor.VictoriaMetricsClient.build_lines(check, state, result)
+    payloads = [json.loads(line) for line in lines]
+
+    warn_min = [
+        payload for payload in payloads if payload["metric"]["__name__"] == "check_perf_warn_min"
+    ]
+    crit_min = [
+        payload for payload in payloads if payload["metric"]["__name__"] == "check_perf_crit_min"
+    ]
+    crit_max = [
+        payload for payload in payloads if payload["metric"]["__name__"] == "check_perf_crit_max"
+    ]
+
+    assert warn_min[0]["values"] == [10.0]
+    assert warn_min[0]["metric"]["threshold_fill"] == "outer"
+    assert crit_min[0]["values"] == [20.0]
+    assert crit_min[0]["metric"]["threshold_fill"] == "inner"
+    assert crit_max[0]["values"] == [30.0]
+    assert crit_max[0]["metric"]["threshold_fill"] == "inner"
 
 
 def test_build_alert_payload():
