@@ -635,3 +635,59 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
     assert state.execution_count == 1
     assert metrics.calls == [(check, 1, "ok")]
     assert "status=ok" in output_stream.getvalue()
+
+
+def test_run_schedules_next_execution_after_one_interval(monkeypatch):
+    check = make_check(check_period=60.0)
+    executor = pluginexecutor.PluginExecutor(
+        pluginexecutor.AppConfig(checks=[check]),
+        output_stream=io.StringIO(),
+    )
+
+    fake_now = [0.0]
+    execution_times: list[float] = []
+    queued_tasks: list[tuple[object, tuple[object, ...]]] = []
+
+    class FakePool:
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+
+        def submit(self, fn, *args):
+            queued_tasks.append((fn, args))
+
+        def shutdown(self, wait=True):
+            return None
+
+    class FakeEvent:
+        def __init__(self):
+            self._set = False
+
+        def is_set(self):
+            return self._set
+
+        def set(self):
+            self._set = True
+
+        def wait(self, timeout):
+            if queued_tasks:
+                fn, args = queued_tasks.pop(0)
+                fn(*args)
+            fake_now[0] += timeout
+            return self._set
+
+    def fake_execute(_check):
+        execution_times.append(fake_now[0])
+        if len(execution_times) >= 2:
+            executor.stop_event.set()
+        return make_result(status="ok", output_text="OK")
+
+    monkeypatch.setattr(pluginexecutor, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(pluginexecutor.time, "monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(pluginexecutor, "compute_check_interval", lambda period: period)
+    monkeypatch.setattr(pluginexecutor, "execute_check", fake_execute)
+
+    executor.stop_event = FakeEvent()
+    executor._next_run_times = [0.0]
+    executor.run()
+
+    assert execution_times == pytest.approx([0.0, 60.0])

@@ -982,7 +982,6 @@ class PluginExecutor:
                                 self.states[idx],
                                 idx,
                             )
-                            self._advance_schedule(idx, now)
                 self.stop_event.wait(0.1)
         finally:
             self._pool.shutdown(wait=True)
