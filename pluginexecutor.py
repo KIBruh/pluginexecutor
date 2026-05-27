@@ -970,7 +970,9 @@ class PluginExecutor:
         try:
             while not self.stop_event.is_set():
                 now = time.monotonic()
+                sleep_time = 1.0
                 with self._lock:
+                    next_due: Optional[float] = None
                     for idx, check in enumerate(self.config.checks):
                         if self._in_flight[idx]:
                             continue
@@ -982,7 +984,12 @@ class PluginExecutor:
                                 self.states[idx],
                                 idx,
                             )
-                self.stop_event.wait(0.1)
+                            continue
+                        if next_due is None or self._next_run_times[idx] < next_due:
+                            next_due = self._next_run_times[idx]
+                    if next_due is not None:
+                        sleep_time = max(0.0, next_due - time.monotonic())
+                self.stop_event.wait(sleep_time)
         finally:
             self._pool.shutdown(wait=True)
 
