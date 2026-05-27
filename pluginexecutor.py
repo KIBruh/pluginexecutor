@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,6 +100,7 @@ class AppConfig:
     checks: list[CheckConfig]
     metrics: EndpointConfig = field(default_factory=EndpointConfig)
     alertmanager: EndpointConfig = field(default_factory=EndpointConfig)
+    max_workers: int = 10
 
 
 @dataclass
@@ -163,7 +165,15 @@ def load_config(path: str | Path) -> AppConfig:
     checks = [parse_check_config(item, index) for index, item in enumerate(normalized_checks)]
     metrics = parse_endpoint_config(raw.get("metrics"), "metrics")
     alertmanager = parse_endpoint_config(raw.get("alertmanager"), "alertmanager")
-    return AppConfig(checks=checks, metrics=metrics, alertmanager=alertmanager)
+    max_workers = raw.get("max_workers", 10)
+    if not isinstance(max_workers, int) or max_workers < 1:
+        raise ValueError("max_workers must be a positive integer")
+    return AppConfig(
+        checks=checks,
+        metrics=metrics,
+        alertmanager=alertmanager,
+        max_workers=max_workers,
+    )
 
 
 def normalize_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
@@ -944,48 +954,66 @@ class PluginExecutor:
         self.output_stream = output_stream or sys.stdout
         self.stop_event = threading.Event()
         self.states = [CheckState() for _ in config.checks]
+        self._lock = threading.Lock()
+        self._next_run_times = [time.monotonic() for _ in config.checks]
+        self._in_flight = [False] * len(config.checks)
+        self._pool: Optional[ThreadPoolExecutor] = None
 
     def run(self) -> None:
-        """Start all worker threads and block until stopped."""
+        """Schedule checks on a bounded threadpool and block until stopped."""
 
-        threads = []
-        for index, check in enumerate(self.config.checks):
-            thread = threading.Thread(
-                target=self._run_check_loop,
-                args=(check, self.states[index]),
-                name=f"check-{index}",
-                daemon=True,
-            )
-            thread.start()
-            threads.append(thread)
-
+        self._pool = ThreadPoolExecutor(max_workers=self.config.max_workers)
         try:
-            while any(thread.is_alive() for thread in threads):
-                for thread in threads:
-                    thread.join(timeout=0.5)
+            while not self.stop_event.is_set():
+                now = time.monotonic()
+                with self._lock:
+                    for idx, check in enumerate(self.config.checks):
+                        if self._in_flight[idx]:
+                            continue
+                        if now >= self._next_run_times[idx]:
+                            self._in_flight[idx] = True
+                            self._pool.submit(
+                                self._run_and_advance,
+                                check,
+                                self.states[idx],
+                                idx,
+                            )
+                            self._advance_schedule(idx, now)
+                self.stop_event.wait(0.1)
         finally:
-            self.stop_event.set()
-            for thread in threads:
-                thread.join(timeout=1)
+            self._pool.shutdown(wait=True)
 
     def stop(self) -> None:
-        """Request all workers to stop."""
+        """Request all workers to stop and wait for in-flight checks."""
 
         self.stop_event.set()
+        pool = self._pool
+        if pool is not None:
+            pool.shutdown(wait=True)
 
-    def _run_check_loop(self, check: CheckConfig, state: CheckState) -> None:
-        """Run one check on a fixed cadence without overlap."""
+    def _advance_schedule(self, idx: int, anchor: float) -> None:
+        """Advance a check's next-run time from an anchor point."""
 
-        next_run = time.monotonic()
-        while not self.stop_event.is_set():
-            remaining = next_run - time.monotonic()
-            if remaining > 0 and self.stop_event.wait(remaining):
-                break
+        next_time = anchor + compute_check_interval(
+            self.config.checks[idx].check_period
+        )
+        while next_time <= time.monotonic():
+            next_time += compute_check_interval(
+                self.config.checks[idx].check_period
+            )
+        self._next_run_times[idx] = next_time
 
+    def _run_and_advance(
+        self, check: CheckConfig, state: CheckState, idx: int
+    ) -> None:
+        """Execute one check and advance its schedule."""
+
+        try:
             self.run_once(check, state)
-            next_run += compute_check_interval(check.check_period)
-            while next_run <= time.monotonic():
-                next_run += compute_check_interval(check.check_period)
+        finally:
+            with self._lock:
+                self._in_flight[idx] = False
+                self._advance_schedule(idx, self._next_run_times[idx])
 
     def run_once(self, check: CheckConfig, state: CheckState) -> CheckResult:
         """Execute one check and process logging, metrics, and alerts."""

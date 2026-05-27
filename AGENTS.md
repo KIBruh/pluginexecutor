@@ -40,5 +40,5 @@
 
 ## Scaling
 
-- Read `SCALING.md` before changing the concurrency model. The current design is intended for dozens to low hundreds of checks, not thousands.
-- Because the app uses one thread per expanded check and synchronous subprocess/HTTP work, changes that increase expanded check count or per-check latency have immediate scaling impact.
+- Read `SCALING.md` before changing the concurrency model. The current design uses a scheduler loop and a bounded `ThreadPoolExecutor` (`max_workers`, default 10). It is intended for dozens to low hundreds of checks, not thousands.
+- Because the app uses one pool slot per concurrently executing check and synchronous subprocess/HTTP work, changes that increase pool occupancy or per-check latency have immediate scaling impact.

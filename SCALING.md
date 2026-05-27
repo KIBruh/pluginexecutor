@@ -2,14 +2,19 @@
 
 ## Current Concurrency Model
 
-The executor currently starts one thread per configured check.
+The executor uses a single scheduler loop + a bounded `ThreadPoolExecutor`.
+
+- The scheduler loop iterates all checks on a 100 ms cycle and submits due checks to the pool.
+- Each check has an `in_flight` guard and a next-run anchor, so the same check never overlaps with itself.
+- A configurable `max_workers` (default 10) limits how many checks can execute simultaneously.
+- Checks for different items run independently in the pool.
 
 Implications:
 
-- one expanded check = one worker thread
-- checks do not block each other
+- one expanded check = one scheduling slot + pool task when due
+- checks do not block each other (subject to pool capacity)
 - runs for the same check do not overlap
-- grouped `targets` count after expansion, so a grouped definition can still become many threads
+- grouped `targets` count after expansion, so a grouped definition can still consume many pool slots
 
 ## What This Likely Handles Well
 
@@ -44,18 +49,19 @@ The last case is likely too heavy for the current model.
 
 The current implementation does:
 
-- one thread per check
+- one scheduler thread
+- one pool task per check execution
 - one subprocess per execution
 - synchronous HTTP for metrics delivery
 - synchronous HTTP for alert delivery
 
 That means scale is limited by:
 
-- thread count
+- pool capacity
 - number of concurrent subprocesses
 - plugin runtime
 - remote HTTP latency
-- CPU and memory overhead from many active checks
+- CPU and memory overhead from the scheduler loop
 
 ## Recommendation
 
@@ -69,7 +75,6 @@ Benchmark carefully if you expect more than about 100-300 checks.
 
 If larger scale is needed, the next step should be a redesign to:
 
-- separate scheduling from execution
-- use a bounded worker pool instead of one thread per check
+- separate scheduling from execution further
 - queue metrics and alert delivery
 - apply backpressure and concurrency limits
