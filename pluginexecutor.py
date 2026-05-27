@@ -468,10 +468,7 @@ def compute_check_interval(check_period: float) -> float:
     """Return the next scheduling interval with bounded random jitter."""
 
     jitter = min(MAX_SCHEDULING_JITTER_SECONDS, check_period * SCHEDULING_JITTER_RATIO)
-    return max(
-        0.0,
-        check_period + random.uniform(-jitter, jitter),
-    )
+    return max(0.0, check_period - random.uniform(0, jitter))
 
 
 def normalize_text(value: str | bytes | None) -> str:
@@ -955,7 +952,10 @@ class PluginExecutor:
         self.stop_event = threading.Event()
         self.states = [CheckState() for _ in config.checks]
         self._lock = threading.Lock()
-        self._next_run_times = [time.monotonic() for _ in config.checks]
+        self._next_run_times = [
+            time.monotonic() + random.uniform(0, min(c.check_period, 60.0))
+            for c in config.checks
+        ]
         self._in_flight = [False] * len(config.checks)
         self._pool: Optional[ThreadPoolExecutor] = None
 

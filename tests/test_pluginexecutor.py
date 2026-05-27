@@ -203,8 +203,8 @@ def test_compute_check_interval_applies_bounded_jitter(monkeypatch):
 
     monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
 
-    assert pluginexecutor.compute_check_interval(60.0) == 60.6
-    assert calls == [(-0.6, 0.6)]
+    assert pluginexecutor.compute_check_interval(60.0) == 59.4
+    assert calls == [(0, 0.6)]
 
 
 def test_compute_check_interval_caps_jitter_at_five_seconds(monkeypatch):
@@ -216,14 +216,14 @@ def test_compute_check_interval_caps_jitter_at_five_seconds(monkeypatch):
 
     monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
 
-    assert pluginexecutor.compute_check_interval(1000.0) == 1005.0
-    assert calls == [(-5.0, 5.0)]
+    assert pluginexecutor.compute_check_interval(1000.0) == 995.0
+    assert calls == [(0, 5.0)]
 
 
-def test_compute_check_interval_never_returns_negative(monkeypatch):
-    monkeypatch.setattr(pluginexecutor.random, "uniform", lambda low, high: -0.01)
+def test_compute_check_interval_floors_at_zero(monkeypatch):
+    monkeypatch.setattr(pluginexecutor.random, "uniform", lambda low, high: 5.0)
 
-    assert pluginexecutor.compute_check_interval(1.0) == 0.99
+    assert pluginexecutor.compute_check_interval(1.0) == 0.0
 
 
 def test_parse_perfdata_supports_quoted_labels():

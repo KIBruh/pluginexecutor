@@ -19,7 +19,7 @@
 
 - `load_config()` expands grouped `checks[*].targets` into flat checks before runtime. One grouped check can turn into many actual worker checks.
 - `PluginExecutor.run()` starts one thread per expanded check. This is the main scaling constraint.
-- Scheduling is fixed-cadence with jitter, not fixed-delay: each next run is advanced by `check_period` plus random jitter of `+/- 1%`, capped at `5s`.
+- Scheduling is fixed-cadence with jitter, not fixed-delay: each next run is advanced by `check_period` minus random jitter of `0 to +1%`, capped at `5s` (so intervals are always ≤ `check_period`).
 - Checks for the same expanded item never overlap, but different checks run independently.
 
 ## Config And Templating
