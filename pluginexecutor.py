@@ -708,7 +708,7 @@ def should_log_output(policy: str, previous_status: Optional[str], current_statu
     if policy == "state-change":
         return previous_status != current_status
     if policy == "non-ok":
-        return current_status != "ok"
+        return previous_status != current_status or current_status != "ok"
     if policy == "never":
         return False
     raise ValueError(f"unknown output policy: {policy}")

@@ -360,7 +360,7 @@ def test_should_log_output():
     assert pluginexecutor.should_log_output("state-change", "ok", "warning") is True
     assert pluginexecutor.should_log_output("state-change", "ok", "ok") is False
     assert pluginexecutor.should_log_output("non-ok", "ok", "critical") is True
-    assert pluginexecutor.should_log_output("non-ok", "warning", "ok") is False
+    assert pluginexecutor.should_log_output("non-ok", "warning", "ok") is True
     assert pluginexecutor.should_log_output("never", None, "critical") is False
 
 
