@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import subprocess
@@ -268,7 +269,7 @@ def normalize_single_check(raw_check: dict[str, Any], field_name: str) -> dict[s
 def build_template_context(raw_check: dict[str, Any]) -> dict[str, Any]:
     """Collect static template variables from a raw check definition."""
 
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"env": os.environ}
     for key, value in raw_check.items():
         if key in {"command", "alert_annotations", "targets"}:
             continue
@@ -1149,6 +1150,7 @@ def render_alert_annotations(
 
     context = {
         **check.template_context,
+        "env": os.environ,
         "host": check.host,
         "service": check.service,
         "status": alert_status,

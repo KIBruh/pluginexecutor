@@ -146,6 +146,30 @@ checks:
     assert config.checks[1].command == ["/bin/check", "--service", "host-2 - staging"]
 
 
+def test_load_config_templates_can_access_environment(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- host: localhost
+  service: "{{ env.PLUGINEXECUTOR_SERVICE }}"
+  command:
+  - /bin/check
+  - "{{ env.PLUGINEXECUTOR_COMMAND_ARG }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PLUGINEXECUTOR_SERVICE", "env-service")
+    monkeypatch.setenv("PLUGINEXECUTOR_COMMAND_ARG", "env-arg")
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert config.checks[0].service == "env-service"
+    assert config.checks[0].command == ["/bin/check", "env-arg"]
+
+
 def test_load_config_rejects_target_key_mismatch(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
