@@ -24,7 +24,8 @@
 
 ## Config And Templating
 
-- Only `command` and `alert_annotations` are Jinja-templated.
+- Only `service`, `command` and `alert_annotations` are Jinja-templated.
+- `service` is rendered before `command` and `alert_annotations`, so the rendered `service` value is available as `{{ service }}` in those templates.
 - Jinja uses `StrictUndefined`; missing template variables fail config load immediately.
 - Grouped `targets` require every target to have the same key set, and every target must include `host`.
 - Default alert annotations are injected when omitted: `checkoutput: "{{ output_text }}"`.

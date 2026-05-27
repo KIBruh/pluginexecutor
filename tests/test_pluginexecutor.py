@@ -117,6 +117,35 @@ checks:
     assert config.checks[1].template_context["cluster"] == "prod"
 
 
+def test_load_config_renders_service_template(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- targets:
+  - host: host-1
+    cluster: prod
+  - host: host-2
+    cluster: staging
+  service: "{{ host }} - {{ cluster }}"
+  command:
+  - /bin/check
+  - --service
+  - "{{ service }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert config.checks[0].service == "host-1 - prod"
+    assert config.checks[0].command == ["/bin/check", "--service", "host-1 - prod"]
+    assert config.checks[1].service == "host-2 - staging"
+    assert config.checks[1].command == ["/bin/check", "--service", "host-2 - staging"]
+
+
 def test_load_config_rejects_target_key_mismatch(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

@@ -251,6 +251,10 @@ def normalize_single_check(raw_check: dict[str, Any], field_name: str) -> dict[s
 
     context = build_template_context(raw_check)
     normalized_check = dict(raw_check)
+    service_raw = normalized_check.pop("service", "")
+    service = render_template(service_raw, context, f"{field_name}.service")
+    normalized_check["service"] = service
+    context["service"] = service
     normalized_check["command"] = render_command_templates(
         raw_check.get("command"), context, f"{field_name}.command"
     )
