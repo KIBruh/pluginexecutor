@@ -7,8 +7,11 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY pluginexecutor.py .
 
-RUN python3 -m venv /venv && \
-    /venv/bin/pip install --no-cache-dir .
+RUN apk add --no-cache --virtual .build-deps git && \
+    python3 -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir . && \
+    /venv/bin/pip install --no-cache-dir "git+https://github.com/bb-Ricardo/check_redfish@v2.1.2" && \
+    apk del .build-deps
 
 ENV PATH="/venv/bin:$PATH"
 
