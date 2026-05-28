@@ -28,6 +28,7 @@ DEFAULT_ALERT_ANNOTATIONS = {"checkoutput": "{{ output_text }}"}
 TEMPLATE_ENVIRONMENT = Environment(autoescape=False, undefined=StrictUndefined)
 INTERNAL_TEMPLATE_CONTEXT_KEY = "__template_context"
 INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
+COMMAND_ARG_DROP_SENTINEL = "__PLUGINEXECUTOR_DROP_ARG__"
 MAX_SCHEDULING_JITTER_SECONDS = 5.0
 SCHEDULING_JITTER_RATIO = 0.01
 NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
@@ -41,6 +42,19 @@ PERFDATA_RE = re.compile(
     r"(?:;(?P<minimum>[^;]*))?"
     r"(?:;(?P<maximum>[^;]*))?$"
 )
+
+
+def read_template_file(path: str, strip: bool = True) -> str:
+    """Read a file for Jinja templating, stripping whitespace by default."""
+
+    try:
+        content = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise TemplateError(str(exc)) from exc
+    return content.strip() if strip else content
+
+
+TEMPLATE_ENVIRONMENT.filters["file"] = read_template_file
 
 
 @dataclass(frozen=True)
@@ -269,7 +283,10 @@ def normalize_single_check(raw_check: dict[str, Any], field_name: str) -> dict[s
 def build_template_context(raw_check: dict[str, Any]) -> dict[str, Any]:
     """Collect static template variables from a raw check definition."""
 
-    context: dict[str, Any] = {"env": os.environ}
+    context: dict[str, Any] = {
+        "env": os.environ,
+        "drop_arg": COMMAND_ARG_DROP_SENTINEL,
+    }
     for key, value in raw_check.items():
         if key in {"command", "alert_annotations", "targets"}:
             continue
@@ -281,10 +298,21 @@ def render_command_templates(value: Any, context: dict[str, Any], field_name: st
     """Render Jinja templates in command arguments."""
 
     command = parse_command(value, field_name)
-    return [
-        render_template(argument, context, f"{field_name}[{index}]")
-        for index, argument in enumerate(command)
-    ]
+    rendered: list[str] = []
+    for index, argument in enumerate(command):
+        rendered_argument = render_template(argument, context, f"{field_name}[{index}]")
+        if rendered_argument == COMMAND_ARG_DROP_SENTINEL:
+            continue
+        rendered.append(
+            require_non_empty_string(
+                rendered_argument,
+                f"{field_name}[{index}]",
+                strip=False,
+            )
+        )
+    if not rendered:
+        raise ValueError(f"{field_name} must contain at least one argument after template rendering")
+    return rendered
 
 
 def parse_alert_annotation_templates(value: Any, field_name: str) -> dict[str, str]:
@@ -401,7 +429,7 @@ def parse_command(value: Any, field_name: str) -> list[str]:
         raise ValueError(f"{field_name} must be a non-empty list")
     command: list[str] = []
     for index, item in enumerate(value):
-        command.append(require_non_empty_string(item, f"{field_name}[{index}]"))
+        command.append(require_non_empty_string(item, f"{field_name}[{index}]", strip=False))
     return command
 
 
@@ -413,12 +441,12 @@ def require_template_context(value: Any, field_name: str) -> dict[str, Any]:
     return dict(value)
 
 
-def require_non_empty_string(value: Any, field_name: str) -> str:
+def require_non_empty_string(value: Any, field_name: str, *, strip: bool = True) -> str:
     """Ensure a field is a non-empty string."""
 
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
-    return value.strip()
+    return value.strip() if strip else value
 
 
 def optional_string(value: Any, field_name: str) -> Optional[str]:

@@ -170,6 +170,75 @@ checks:
     assert config.checks[0].command == ["/bin/check", "env-arg"]
 
 
+def test_load_config_templates_can_read_files(tmp_path):
+    secret_path = tmp_path / "secret.txt"
+    raw_path = tmp_path / "raw.txt"
+    secret_path.write_text("token-value\n", encoding="utf-8")
+    raw_path.write_text("line one\nline two\n", encoding="utf-8")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"""
+checks:
+- host: localhost
+  service: "{{{{ '{secret_path}' | file }}}}"
+  command:
+  - /bin/check
+  - "{{{{ '{raw_path}' | file(strip=False) }}}}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert config.checks[0].service == "token-value"
+    assert config.checks[0].command == ["/bin/check", "line one\nline two\n"]
+
+
+def test_load_config_command_templates_can_drop_arguments(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- host: localhost
+  service: ping
+  command:
+  - /bin/check
+  - "{{ drop_arg }}"
+  - --host
+  - "{{ host }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert config.checks[0].command == ["/bin/check", "--host", "localhost"]
+
+
+def test_load_config_rejects_command_when_all_arguments_are_dropped(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- host: localhost
+  service: ping
+  command:
+  - "{{ drop_arg }}"
+  check_period: 15
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="must contain at least one argument"):
+        pluginexecutor.load_config(config_path)
+
+
 def test_load_config_rejects_target_key_mismatch(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
