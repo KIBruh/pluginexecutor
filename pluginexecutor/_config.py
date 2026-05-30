@@ -12,8 +12,8 @@ from ._constants import (
     INTERNAL_ALERT_ANNOTATIONS_KEY,
     INTERNAL_TEMPLATE_CONTEXT_KEY,
     OUTPUT_POLICIES,
-    TEMPLATE_ENVIRONMENT,
 )
+from ._templating import render_template
 from ._types import AppConfig, CheckConfig, EndpointConfig, TLSOptions
 
 
@@ -167,15 +167,6 @@ def parse_alert_annotation_templates(value: Any, field_name: str) -> dict[str, s
             template, f"{field_name}.{annotation_key}"
         )
     return annotations
-
-
-def render_template(template: str, context: dict[str, Any], field_name: str) -> str:
-    from jinja2 import TemplateError
-
-    try:
-        return TEMPLATE_ENVIRONMENT.from_string(template).render(context)
-    except TemplateError as exc:
-        raise ValueError(f"failed to render {field_name}: {exc}") from exc
 
 
 def parse_check_config(raw: Any, index: int) -> CheckConfig:

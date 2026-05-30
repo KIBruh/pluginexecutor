@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import pluginexecutor
-import pluginexecutor._executor
+from pluginexecutor import _alerting, _executor, _logging, _plugin
 
 
 def make_check(**overrides):
@@ -314,7 +314,7 @@ checks:
     ],
 )
 def test_map_exit_code(exit_code, expected):
-    assert pluginexecutor.map_exit_code(exit_code) == expected
+    assert _plugin.map_exit_code(exit_code) == expected
 
 
 def test_compute_check_interval_applies_bounded_jitter(monkeypatch):
@@ -324,9 +324,9 @@ def test_compute_check_interval_applies_bounded_jitter(monkeypatch):
         calls.append((low, high))
         return 0.6
 
-    monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
+    monkeypatch.setattr(_plugin.random, "uniform", fake_uniform)
 
-    assert pluginexecutor.compute_check_interval(60.0) == 59.4
+    assert _plugin.compute_check_interval(60.0) == 59.4
     assert calls == [(0, 0.6)]
 
 
@@ -337,20 +337,20 @@ def test_compute_check_interval_caps_jitter_at_five_seconds(monkeypatch):
         calls.append((low, high))
         return 5.0
 
-    monkeypatch.setattr(pluginexecutor.random, "uniform", fake_uniform)
+    monkeypatch.setattr(_plugin.random, "uniform", fake_uniform)
 
-    assert pluginexecutor.compute_check_interval(1000.0) == 995.0
+    assert _plugin.compute_check_interval(1000.0) == 995.0
     assert calls == [(0, 5.0)]
 
 
 def test_compute_check_interval_floors_at_zero(monkeypatch):
-    monkeypatch.setattr(pluginexecutor.random, "uniform", lambda low, high: 5.0)
+    monkeypatch.setattr(_plugin.random, "uniform", lambda low, high: 5.0)
 
-    assert pluginexecutor.compute_check_interval(1.0) == 0.0
+    assert _plugin.compute_check_interval(1.0) == 0.0
 
 
 def test_parse_perfdata_supports_quoted_labels():
-    perfdata = pluginexecutor.parse_perfdata(
+    perfdata = _plugin.parse_perfdata(
         "'queue depth'=4ms;10;20;;30 size=1.5GB;2;4;0;8 broken=5%;~:10;20"
     )
 
@@ -383,7 +383,7 @@ def test_parse_perfdata_supports_quoted_labels():
 
 
 def test_parse_plugin_stdout_collects_perfdata_from_all_pipe_segments():
-    output_text, perfdata = pluginexecutor.parse_plugin_stdout(
+    output_text, perfdata = _plugin.parse_plugin_stdout(
         "DISK OK - free space: / 3326 MB (56%); | /=2643MB;5948;5958;0;5968\n"
         "/boot 68 MB (69%); | /boot=68MB;88;93;0;98\n"
         "/home 69357 MB (27%);\n"
@@ -400,7 +400,7 @@ def test_parse_plugin_stdout_collects_perfdata_from_all_pipe_segments():
 
 
 def test_parse_plugin_stdout_handles_perfdata_only_on_later_lines():
-    output_text, perfdata = pluginexecutor.parse_plugin_stdout(
+    output_text, perfdata = _plugin.parse_plugin_stdout(
         "PING OK\nRTA summary | rta=0.80ms;1;2;0;5\n"
     )
 
@@ -410,7 +410,7 @@ def test_parse_plugin_stdout_handles_perfdata_only_on_later_lines():
 
 
 def test_parse_perfdata_supports_range_thresholds_for_numeric_metrics():
-    perfdata = pluginexecutor.parse_perfdata("latency=5ms;10:;@20:30;0;60")
+    perfdata = _plugin.parse_perfdata("latency=5ms;10:;@20:30;0;60")
 
     assert perfdata == [
         pluginexecutor.PerfDatum(
@@ -431,7 +431,7 @@ def test_parse_perfdata_supports_range_thresholds_for_numeric_metrics():
 
 
 def test_parse_perfdata_normalizes_comma_decimals_and_open_upper_ranges():
-    perfdata = pluginexecutor.parse_perfdata("temp=54,2C;40,5:60,5;70,0:;0;100")
+    perfdata = _plugin.parse_perfdata("temp=54,2C;40,5:60,5;70,0:;0;100")
 
     assert perfdata == [
         pluginexecutor.PerfDatum(
@@ -450,12 +450,12 @@ def test_parse_perfdata_normalizes_comma_decimals_and_open_upper_ranges():
 
 
 def test_should_log_output():
-    assert pluginexecutor.should_log_output("always", "ok", "ok") is True
-    assert pluginexecutor.should_log_output("state-change", "ok", "warning") is True
-    assert pluginexecutor.should_log_output("state-change", "ok", "ok") is False
-    assert pluginexecutor.should_log_output("non-ok", "ok", "critical") is True
-    assert pluginexecutor.should_log_output("non-ok", "warning", "ok") is True
-    assert pluginexecutor.should_log_output("never", None, "critical") is False
+    assert _logging.should_log_output("always", "ok", "ok") is True
+    assert _logging.should_log_output("state-change", "ok", "warning") is True
+    assert _logging.should_log_output("state-change", "ok", "ok") is False
+    assert _logging.should_log_output("non-ok", "ok", "critical") is True
+    assert _logging.should_log_output("non-ok", "warning", "ok") is True
+    assert _logging.should_log_output("never", None, "critical") is False
 
 
 def test_build_victoriametrics_lines_include_status_and_perfdata():
@@ -650,7 +650,7 @@ def test_render_alert_annotations_uses_default_checkoutput_template():
     check = make_check()
     result = make_result(status="critical", output_text="disk full")
 
-    annotations = pluginexecutor.render_alert_annotations(
+    annotations = _alerting.render_alert_annotations(
         check, result, previous_status="ok", alert_status="critical"
     )
 
@@ -669,7 +669,7 @@ def test_render_alert_annotations_supports_custom_templates():
     )
     result = make_result(status="ok", output_text="recovered")
 
-    annotations = pluginexecutor.render_alert_annotations(
+    annotations = _alerting.render_alert_annotations(
         check, result, previous_status="critical", alert_status="critical"
     )
 
@@ -685,9 +685,9 @@ def test_execute_check_maps_timeout_to_unknown(monkeypatch):
             cmd=kwargs.get("args", check.command), timeout=5, output="", stderr=""
         )
 
-    monkeypatch.setattr(pluginexecutor.subprocess, "run", fake_run)
+    monkeypatch.setattr(_plugin.subprocess, "run", fake_run)
 
-    result = pluginexecutor.execute_check(check)
+    result = _plugin.execute_check(check)
 
     assert result.status == "unknown"
     assert result.exit_code is None
@@ -719,7 +719,7 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
         output_stream=output_stream,
     )
     monkeypatch.setattr(
-        pluginexecutor._executor,
+        _executor,
         "execute_check",
         lambda _check: make_result(status="ok", output_text="OK"),
     )
@@ -775,10 +775,10 @@ def test_run_schedules_next_execution_after_one_interval(monkeypatch):
             executor.stop_event.set()
         return make_result(status="ok", output_text="OK")
 
-    monkeypatch.setattr(pluginexecutor._executor, "ThreadPoolExecutor", FakePool)
-    monkeypatch.setattr(pluginexecutor._executor.time, "monotonic", lambda: fake_now[0])
-    monkeypatch.setattr(pluginexecutor._executor, "compute_check_interval", lambda period: period)
-    monkeypatch.setattr(pluginexecutor._executor, "execute_check", fake_execute)
+    monkeypatch.setattr(_executor, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(_executor.time, "monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(_executor, "compute_check_interval", lambda period: period)
+    monkeypatch.setattr(_executor, "execute_check", fake_execute)
 
     executor.stop_event = FakeEvent()
     executor._next_run_times = [0.0]

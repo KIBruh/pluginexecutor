@@ -6,17 +6,8 @@ from typing import Any, Optional, Sequence
 
 import requests
 
-from ._constants import TEMPLATE_ENVIRONMENT
+from ._templating import render_template
 from ._types import CheckConfig, CheckResult, EndpointConfig
-
-
-def render_template(template: str, context: dict[str, Any], field_name: str) -> str:
-    from jinja2 import TemplateError
-
-    try:
-        return TEMPLATE_ENVIRONMENT.from_string(template).render(context)
-    except TemplateError as exc:
-        raise ValueError(f"failed to render {field_name}: {exc}") from exc
 
 
 class AlertmanagerClient:

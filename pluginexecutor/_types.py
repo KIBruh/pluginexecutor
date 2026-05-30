@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
+from ._constants import DEFAULT_ALERT_ANNOTATIONS
+
 
 @dataclass(frozen=True)
 class TLSOptions:
@@ -44,7 +46,7 @@ class CheckConfig:
     output: str = "state-change"
     template_context: dict[str, Any] = field(default_factory=dict)
     alert_annotations: dict[str, str] = field(
-        default_factory=lambda: {"checkoutput": "{{ output_text }}"}
+        default_factory=lambda: dict(DEFAULT_ALERT_ANNOTATIONS)
     )
 
 
