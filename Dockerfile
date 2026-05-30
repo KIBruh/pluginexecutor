@@ -3,7 +3,7 @@ FROM alpine:3.23
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-COPY pluginexecutor.py .
+COPY pluginexecutor/ ./pluginexecutor/
 
 RUN apk update && apk upgrade && \
     apk add --no-cache python3 py3-pip monitoring-plugins && \

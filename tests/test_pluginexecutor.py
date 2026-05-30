@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import pluginexecutor
+import pluginexecutor._executor
 
 
 def make_check(**overrides):
@@ -718,7 +719,7 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
         output_stream=output_stream,
     )
     monkeypatch.setattr(
-        pluginexecutor,
+        pluginexecutor._executor,
         "execute_check",
         lambda _check: make_result(status="ok", output_text="OK"),
     )
@@ -774,10 +775,10 @@ def test_run_schedules_next_execution_after_one_interval(monkeypatch):
             executor.stop_event.set()
         return make_result(status="ok", output_text="OK")
 
-    monkeypatch.setattr(pluginexecutor, "ThreadPoolExecutor", FakePool)
-    monkeypatch.setattr(pluginexecutor.time, "monotonic", lambda: fake_now[0])
-    monkeypatch.setattr(pluginexecutor, "compute_check_interval", lambda period: period)
-    monkeypatch.setattr(pluginexecutor, "execute_check", fake_execute)
+    monkeypatch.setattr(pluginexecutor._executor, "ThreadPoolExecutor", FakePool)
+    monkeypatch.setattr(pluginexecutor._executor.time, "monotonic", lambda: fake_now[0])
+    monkeypatch.setattr(pluginexecutor._executor, "compute_check_interval", lambda period: period)
+    monkeypatch.setattr(pluginexecutor._executor, "execute_check", fake_execute)
 
     executor.stop_event = FakeEvent()
     executor._next_run_times = [0.0]

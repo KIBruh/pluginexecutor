@@ -71,7 +71,7 @@ alertmanager:
 ## Run
 
 ```bash
-python pluginexecutor.py /path/to/config.yaml
+python -m pluginexecutor /path/to/config.yaml
 ```
 
 Or, after `pip install -e .`:
