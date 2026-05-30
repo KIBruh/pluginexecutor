@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any, Optional
 
 import requests
@@ -126,59 +127,107 @@ class PluginExecutor:
     ) -> list[dict[str, Any]]:
         if not self.config.alertmanager.enabled:
             if result.status == "ok":
-                state.failing_since = None
-                state.alert_active = False
-                state.alert_status = None
-                state.alert_starts_at = None
+                self._reset_alert_state(state)
             elif state.failing_since is None:
                 state.failing_since = result.finished_at
             return []
 
         alerts: list[dict[str, Any]] = []
         if result.status == "ok":
-            state.failing_since = None
-            if state.alert_active and state.alert_status:
-                alerts.append(
-                    AlertmanagerClient.build_alert(
-                        check,
-                        state.alert_status,
-                        render_alert_annotations(
-                            check,
-                            result,
-                            previous_status=state.last_status,
-                            alert_status=state.alert_status,
-                        ),
-                        state.alert_starts_at or result.finished_at,
-                        ends_at=result.finished_at,
-                    )
-                )
-            state.alert_active = False
-            state.alert_status = None
-            state.alert_starts_at = None
+            self._resolve_active_alert(check, state, result, alerts)
+            self._reset_alert_state(state)
             return alerts
 
         if state.failing_since is None:
             state.failing_since = result.finished_at
 
-        if state.alert_active and state.alert_status and state.alert_status != result.status:
-            alerts.append(
-                AlertmanagerClient.build_alert(
-                    check,
-                    state.alert_status,
-                    render_alert_annotations(
-                        check,
-                        result,
-                        previous_status=state.last_status,
-                        alert_status=state.alert_status,
-                    ),
-                    state.alert_starts_at or state.failing_since,
-                    ends_at=result.finished_at,
-                )
-            )
-            state.alert_active = False
-            state.alert_status = None
-            state.alert_starts_at = None
+        self._resolve_on_severity_change(check, state, result, alerts)
 
+        self._maybe_fire_alert(check, state, result, alerts)
+
+        return alerts
+
+    def _reset_alert_state(self, state: CheckState) -> None:
+        state.failing_since = None
+        state.alert_active = False
+        state.alert_status = None
+        state.alert_starts_at = None
+
+    def _build_alert(
+        self,
+        check: CheckConfig,
+        state: CheckState,
+        result: CheckResult,
+        status: str,
+        starts_at: datetime,
+        *,
+        ends_at: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        return AlertmanagerClient.build_alert(
+            check,
+            status,
+            render_alert_annotations(
+                check,
+                result,
+                previous_status=state.last_status,
+                alert_status=status,
+            ),
+            starts_at,
+            ends_at=ends_at,
+        )
+
+    def _resolve_active_alert(
+        self,
+        check: CheckConfig,
+        state: CheckState,
+        result: CheckResult,
+        alerts: list[dict[str, Any]],
+    ) -> None:
+        if not state.alert_active or not state.alert_status:
+            return
+        alerts.append(
+            self._build_alert(
+                check,
+                state,
+                result,
+                state.alert_status,
+                state.alert_starts_at or result.finished_at,
+                ends_at=result.finished_at,
+            )
+        )
+
+    def _resolve_on_severity_change(
+        self,
+        check: CheckConfig,
+        state: CheckState,
+        result: CheckResult,
+        alerts: list[dict[str, Any]],
+    ) -> None:
+        if not state.alert_active or not state.alert_status:
+            return
+        if state.alert_status == result.status:
+            return
+        alerts.append(
+            self._build_alert(
+                check,
+                state,
+                result,
+                state.alert_status,
+                state.alert_starts_at or state.failing_since,
+                ends_at=result.finished_at,
+            )
+        )
+        state.alert_active = False
+        state.alert_status = None
+        state.alert_starts_at = None
+
+    def _maybe_fire_alert(
+        self,
+        check: CheckConfig,
+        state: CheckState,
+        result: CheckResult,
+        alerts: list[dict[str, Any]],
+    ) -> None:
         if not state.alert_active:
             failing_for = (result.finished_at - state.failing_since).total_seconds()
             if failing_for >= check.notification_delay:
@@ -186,17 +235,11 @@ class PluginExecutor:
                 state.alert_status = result.status
                 state.alert_starts_at = state.failing_since
                 alerts.append(
-                    AlertmanagerClient.build_alert(
+                    self._build_alert(
                         check,
+                        state,
+                        result,
                         result.status,
-                        render_alert_annotations(
-                            check,
-                            result,
-                            previous_status=state.last_status,
-                            alert_status=result.status,
-                        ),
                         state.alert_starts_at,
                     )
                 )
-
-        return alerts
