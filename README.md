@@ -71,7 +71,7 @@ alertmanager:
 ## Run
 
 ```bash
-python pluginexecutor.py /path/to/config.yaml
+python -m pluginexecutor /path/to/config.yaml
 ```
 
 Or, after `pip install -e .`:
@@ -115,7 +115,7 @@ For grouped checks:
 - every target in the group must have the same set of keys
 - target keys are available to Jinja templates in `command`
 
-Only `command` and `alert_annotations` are templated.
+Only `service`, `command`, and `alert_annotations` are templated.
 
 ## Metrics
 
