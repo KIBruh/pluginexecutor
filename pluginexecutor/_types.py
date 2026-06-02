@@ -81,9 +81,7 @@ class CheckState:
     last_status: Optional[str] = None
     last_output: str = ""
     failing_since: Optional[datetime] = None
-    alert_active: bool = False
-    alert_status: Optional[str] = None
-    alert_starts_at: Optional[datetime] = None
+    last_alerted_status: Optional[str] = None
 
 
 @dataclass(frozen=True)

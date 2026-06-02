@@ -607,13 +607,26 @@ def test_update_alert_state_honors_notification_delay():
         status="critical",
         finished_at=datetime(2026, 5, 21, 10, 0, 31, tzinfo=timezone.utc),
     )
+    third_result = make_result(
+        status="critical",
+        finished_at=datetime(2026, 5, 21, 10, 1, 2, tzinfo=timezone.utc),
+    )
 
     assert executor.update_alert_state(check, state, first_result) == []
     alerts = executor.update_alert_state(check, state, second_result)
 
     assert len(alerts) == 1
     assert alerts[0]["labels"]["status"] == "critical"
-    assert state.alert_active is True
+    assert state.last_alerted_status == "critical"
+
+    # third call: still failing, delay passed again → re-fire
+    alerts = executor.update_alert_state(check, state, third_result)
+    assert len(alerts) == 2
+    assert alerts[0]["labels"]["status"] == "critical"
+    assert "endsAt" in alerts[0]
+    assert alerts[1]["labels"]["status"] == "critical"
+    assert "endsAt" not in alerts[1]
+    assert state.last_alerted_status == "critical"
 
 
 def test_update_alert_state_resolves_and_refires_on_severity_change():
@@ -627,9 +640,7 @@ def test_update_alert_state_resolves_and_refires_on_severity_change():
     check = config.checks[0]
     state = pluginexecutor.CheckState(
         failing_since=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
-        alert_active=True,
-        alert_status="warning",
-        alert_starts_at=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+        last_alerted_status="warning",
     )
     result = make_result(
         status="critical",
