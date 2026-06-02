@@ -1,6 +1,6 @@
 FROM alpine:3.23
 
-WORKDIR /app
+WORKDIR /tmp/build
 
 COPY pyproject.toml README.md ./
 COPY pluginexecutor/ ./pluginexecutor/
@@ -13,11 +13,15 @@ RUN apk update && apk upgrade && \
     /venv/bin/pip install --no-cache-dir "git+https://github.com/bb-Ricardo/check_redfish@v2.1.2" && \
     curl -fsSL 'https://raw.githubusercontent.com/nbuchwitz/check_pve/8711172166802584d0beb87f1cfe764e3eef35e0/check_pve.py' -o /venv/bin/check_pve && \
     chmod 0755 /venv/bin/check_pve && \
-    apk del .build-deps
+    apk del .build-deps && \
+    rm -rf /tmp/build && \
+    mkdir -p /app
 
 ENV PATH="/venv/bin:$PATH"
+
+WORKDIR /app
 
 USER nobody
 
 ENTRYPOINT ["pluginexecutor"]
-CMD ["/app/config.yaml"]
+CMD ["config.yaml"]
