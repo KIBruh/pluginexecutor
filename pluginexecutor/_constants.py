@@ -11,14 +11,44 @@ INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
 COMMAND_ARG_DROP_SENTINEL = "__PLUGINEXECUTOR_DROP_ARG__"
 MAX_SCHEDULING_JITTER_SECONDS = 5.0
 SCHEDULING_JITTER_RATIO = 0.01
-NUMERIC_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
-RANGE_NUMBER_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)")
+NUMERIC_PATTERN = r"""
+    [+-]?              # optional sign
+    (?:
+        \d+           # integer part
+        (?:\.\d*)?   # optional decimal point and fractional digits
+      |
+        \.\d+        # decimal value without leading integer part
+    )
+"""
+
+NUMERIC_RE = re.compile(r"^" + NUMERIC_PATTERN + r"$", re.X)
+RANGE_NUMBER_RE = re.compile(NUMERIC_PATTERN, re.X)
 PERFDATA_RE = re.compile(
-    r"^(?P<label>'[^']+'|[^=\s]+)="
-    r"(?P<value>U|[+-]?(?:\d+(?:[\.,]\d*)?|[\.,]\d+))"
-    r"(?P<uom>[^;\s]*)"
-    r"(?:;(?P<warn>[^;]*))?"
-    r"(?:;(?P<crit>[^;]*))?"
-    r"(?:;(?P<minimum>[^;]*))?"
-    r"(?:;(?P<maximum>[^;]*))?$"
+    r"""
+    ^                                  # start of perfdata item
+    (?P<label>
+        '[^']+'                        # quoted label
+      |
+        [^=\s]+                       # unquoted label up to '=' or whitespace
+    )
+    =                                  # label/value separator
+    (?P<value>
+        U                              # unknown value marker
+      |
+        [+-]?                          # optional sign
+        (?:
+            \d+                       # integer part
+            (?:[\.,]\d*)?            # optional decimal separator and fraction
+          |
+            [\.,]\d+                 # decimal value without leading integer part
+        )
+    )
+    (?P<uom>[^;\s]*)                  # optional unit of measure
+    (?:;(?P<warn>[^;]*))?              # optional warning threshold
+    (?:;(?P<crit>[^;]*))?              # optional critical threshold
+    (?:;(?P<minimum>[^;]*))?           # optional minimum value
+    (?:;(?P<maximum>[^;]*))?           # optional maximum value
+    $                                  # end of perfdata item
+    """,
+    re.X,
 )
