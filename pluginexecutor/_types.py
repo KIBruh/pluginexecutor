@@ -51,10 +51,19 @@ class CheckConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    enabled: bool = False
+    listen: str = "127.0.0.1"
+    port: int = 8080
+    mountpoint: str = ""
+
+
+@dataclass(frozen=True)
 class AppConfig:
     checks: list[CheckConfig]
     metrics: EndpointConfig = field(default_factory=EndpointConfig)
     alertmanager: EndpointConfig = field(default_factory=EndpointConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     max_workers: int = 10
 
 

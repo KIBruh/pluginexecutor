@@ -41,6 +41,10 @@ class PluginExecutor:
 
     def run(self) -> None:
         self._pool = ThreadPoolExecutor(max_workers=self.config.max_workers)
+        if self.config.web.enabled:
+            from ._web import StatusWebServer
+            self._web_server = StatusWebServer(self, self.config.web)
+            self._web_server.start()
         try:
             while not self.stop_event.is_set():
                 now = time.monotonic()

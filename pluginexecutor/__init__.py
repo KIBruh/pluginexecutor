@@ -15,6 +15,7 @@ from ._types import (
     EndpointConfig,
     PerfDatum,
     TLSOptions,
+    WebConfig,
 )
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "PluginExecutor",
     "TLSOptions",
     "VictoriaMetricsClient",
+    "WebConfig",
     "load_config",
     "main",
     "parse_args",

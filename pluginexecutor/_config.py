@@ -14,7 +14,7 @@ from ._constants import (
     OUTPUT_POLICIES,
 )
 from ._templating import render_template
-from ._types import AppConfig, CheckConfig, EndpointConfig, TLSOptions
+from ._types import AppConfig, CheckConfig, EndpointConfig, TLSOptions, WebConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -34,10 +34,12 @@ def load_config(path: str | Path) -> AppConfig:
     max_workers = raw.get("max_workers", 10)
     if not isinstance(max_workers, int) or max_workers < 1:
         raise ValueError("max_workers must be a positive integer")
+    web = parse_web_config(raw.get("web"))
     return AppConfig(
         checks=checks,
         metrics=metrics,
         alertmanager=alertmanager,
+        web=web,
         max_workers=max_workers,
     )
 
@@ -228,6 +230,21 @@ def parse_endpoint_config(raw: Any, field_name: str) -> EndpointConfig:
     return EndpointConfig(enabled=enabled, url=url, tls_options=tls_options)
 
 
+def parse_web_config(raw: Any) -> WebConfig:
+    if raw is None:
+        return WebConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("web must be a mapping")
+
+    enabled = require_bool(raw.get("enabled", True), "web.enabled")
+    listen = require_non_empty_string(raw.get("listen", "127.0.0.1"), "web.listen")
+    port = raw.get("port", 8080)
+    if not isinstance(port, int) or port < 1 or port > 65535:
+        raise ValueError("web.port must be an integer between 1 and 65535")
+    mountpoint = normalize_mountpoint(raw.get("mountpoint", ""))
+    return WebConfig(enabled=enabled, listen=listen, port=port, mountpoint=mountpoint)
+
+
 def parse_tls_options(raw: Any, field_name: str) -> TLSOptions:
     if raw is None:
         return TLSOptions()
@@ -287,3 +304,16 @@ def require_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{field_name} must be a boolean")
     return value
+
+
+def normalize_mountpoint(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError("web.mountpoint must be a string")
+    value = value.strip()
+    if not value:
+        return ""
+    if value == "/":
+        return ""
+    if not value.startswith("/"):
+        value = "/" + value
+    return value.rstrip("/")

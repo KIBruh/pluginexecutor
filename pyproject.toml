@@ -12,6 +12,7 @@ dependencies = [
   "Jinja2>=3.1.0",
   "PyYAML>=6.0",
   "requests>=2.31.0",
+  "bottle>=0.12",
 ]
 
 [project.optional-dependencies]
