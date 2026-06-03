@@ -36,103 +36,467 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PluginExecutor Status</title>
 <style>
-  *, *::before, *::after {{ box-sizing: border-box; }}
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    margin: 0; padding: 20px; background: #f5f5f5; color: #333;
-  }}
-  h1 {{ margin: 0 0 16px 0; font-size: 1.5rem; }}
-  .filters {{ margin-bottom: 16px; display: flex; gap: 12px; flex-wrap: wrap; }}
-  .filters label {{ font-weight: 600; margin-right: 4px; }}
-  .filters input {{
-    padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem;
-  }}
-  .summary {{ margin-bottom: 12px; font-size: 0.875rem; color: #666; }}
-  table {{ width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-  th, td {{ padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.875rem; }}
-  th {{ background: #fafafa; font-weight: 600; color: #555; white-space: nowrap; }}
-  tr:hover td {{ background: #f8f9fa; }}
-  .status-badge {{
-    display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 0.75rem;
-    font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-  }}
-  .status-ok {{ background: #d4edda; color: #155724; }}
-  .status-warning {{ background: #fff3cd; color: #856404; }}
-  .status-critical {{ background: #f8d7da; color: #721c24; }}
-  .status-unknown {{ background: #e2e3e5; color: #383d41; }}
-  .status-oob {{ background: #f8d7da; color: #721c24; }}
-  .output-cell {{ max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.8125rem; }}
-  .count-cell {{ text-align: right; font-variant-numeric: tabular-nums; }}
-  .next-cell {{ white-space: nowrap; font-variant-numeric: tabular-nums; }}
-  .empty {{ text-align: center; padding: 40px; color: #999; }}
-  .refresh-note {{ margin-top: 8px; font-size: 0.75rem; color: #999; text-align: right; }}
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --bg: #0f1318;
+    --surface: #1a1f26;
+    --surface-hover: #222830;
+    --border: #2a3038;
+    --text: #e1e4e8;
+    --text-muted: #8b949e;
+    --text-dim: #586069;
+    --ok: #2ea043;
+    --ok-bg: rgba(46, 160, 67, 0.12);
+    --ok-border: rgba(46, 160, 67, 0.3);
+    --warning: #d29922;
+    --warning-bg: rgba(210, 153, 34, 0.12);
+    --warning-border: rgba(210, 153, 34, 0.3);
+    --critical: #da3633;
+    --critical-bg: rgba(218, 54, 51, 0.12);
+    --critical-border: rgba(218, 54, 51, 0.3);
+    --unknown: #6e7681;
+    --unknown-bg: rgba(110, 118, 129, 0.12);
+    --unknown-border: rgba(110, 118, 129, 0.3);
+    --oob: #da3633;
+    --oob-bg: rgba(218, 54, 51, 0.12);
+    --oob-border: rgba(218, 54, 51, 0.3);
+    --input-bg: #0d1117;
+    --radius: 8px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+    --mono: "SF Mono", "Monaspace Neon", "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font);
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .header h1 {
+    margin: 0;
+    font-size: 1.375rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .header-badge {
+    font-size: 0.6875rem;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .last-refresh { font-variant-numeric: tabular-nums; }
+
+  /* Status summary strip */
+  .summary-strip {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .summary-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.8125rem;
+  }
+
+  .summary-card .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .summary-card .count {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 1.2em;
+  }
+
+  .sc-total { color: var(--text-muted); }
+  .sc-ok .dot { background: var(--ok); }
+  .sc-ok .count { color: var(--ok); }
+  .sc-warning .dot { background: var(--warning); }
+  .sc-warning .count { color: var(--warning); }
+  .sc-critical .dot { background: var(--critical); }
+  .sc-critical .count { color: var(--critical); }
+  .sc-unknown .dot { background: var(--unknown); }
+  .sc-unknown .count { color: var(--unknown); }
+
+  /* Filters */
+  .filters {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .filter-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .filter-group .icon {
+    position: absolute;
+    left: 10px;
+    color: var(--text-dim);
+    font-size: 0.8125rem;
+    pointer-events: none;
+  }
+
+  .filter-group input {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.8125rem;
+    padding: 7px 10px 7px 28px;
+    width: 200px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .filter-group input:focus {
+    border-color: var(--text-muted);
+  }
+
+  .filter-group input::placeholder {
+    color: var(--text-dim);
+  }
+
+  /* Table */
+  .table-wrap {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  th {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  tbody tr:hover td {
+    background: var(--surface-hover);
+  }
+
+  .host-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .host-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6875rem;
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+
+  /* Status badge */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border: 1px solid transparent;
+  }
+
+  .status-badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  .status-ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+  .status-ok .dot { background: var(--ok); }
+  .status-warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning); }
+  .status-warning .dot { background: var(--warning); }
+  .status-critical { background: var(--critical-bg); border-color: var(--critical-border); color: var(--critical); }
+  .status-critical .dot { background: var(--critical); }
+  .status-unknown { background: var(--unknown-bg); border-color: var(--unknown-border); color: var(--unknown); }
+  .status-unknown .dot { background: var(--unknown); }
+  .status-oob { background: var(--oob-bg); border-color: var(--oob-border); color: var(--oob); }
+  .status-oob .dot { background: var(--oob); }
+
+  .output-cell {
+    max-width: 380px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: default;
+  }
+
+  .count-cell {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+
+  .next-cell {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .next-cell .running {
+    color: var(--warning);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--warning-border);
+    border-top-color: var(--warning);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .empty {
+    text-align: center;
+    padding: 40px 16px;
+    color: var(--text-dim);
+    font-size: 0.875rem;
+  }
+
+  .error-bar {
+    margin-top: 8px;
+    padding: 8px 14px;
+    background: var(--critical-bg);
+    border: 1px solid var(--critical-border);
+    border-radius: var(--radius);
+    color: var(--critical);
+    font-size: 0.8125rem;
+    display: none;
+  }
+
+  /* responsive */
+  @media (max-width: 768px) {
+    body { padding: 12px; }
+    .header h1 { font-size: 1.125rem; }
+    .filter-group input { width: 150px; }
+    th, td { padding: 8px 10px; }
+    .output-cell { max-width: 160px; }
+  }
 </style>
 </head>
 <body>
-<h1>Pluginexecutor Status</h1>
-<div class="filters">
-  <div><label for="filter-host">Host</label><input type="text" id="filter-host" placeholder="Filter by host&hellip;"></div>
-  <div><label for="filter-service">Service</label><input type="text" id="filter-service" placeholder="Filter by service&hellip;"></div>
+
+<div class="header">
+  <div class="header-left">
+    <h1>Pluginexecutor</h1>
+    <span class="header-badge" id="total-badge">0 checks</span>
+  </div>
+  <div class="header-right">
+    <span class="last-refresh" id="last-refresh"></span>
+  </div>
 </div>
-<div class="summary" id="summary"></div>
+
+<div class="summary-strip" id="summary-strip"></div>
+
+<div class="filters">
+  <div class="filter-group">
+    <span class="icon">&#128269;</span>
+    <input type="text" id="filter-host" placeholder="Filter by host&hellip;">
+  </div>
+  <div class="filter-group">
+    <span class="icon">&#128269;</span>
+    <input type="text" id="filter-service" placeholder="Filter by service&hellip;">
+  </div>
+</div>
+
+<div class="table-wrap">
 <table>
-  <thead><tr><th>Host</th><th>Service</th><th>Status</th><th>Last Output</th><th>#</th><th>Next Run</th></tr></thead>
+  <thead>
+    <tr>
+      <th>Host</th>
+      <th>Service</th>
+      <th>Status</th>
+      <th>Last Output</th>
+      <th style="text-align:right">#</th>
+      <th>Next Run</th>
+    </tr>
+  </thead>
   <tbody id="checks-body"></tbody>
 </table>
-<div class="refresh-note" id="refresh-note"></div>
+</div>
+
+<div class="error-bar" id="error-bar"></div>
+
 <script>
   let checksCache = [];
 
-  function escape(s) {{
-    const div = document.createElement("div");
-    div.appendChild(document.createTextNode(s));
-    return div.innerHTML;
-  }}
+  function escape(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
 
-  function statusBadge(status) {{
-    const cls = status ? "status-" + status : "status-unknown";
-    const label = status ? status.toUpperCase() : "PENDING";
-    return '<span class="status-badge ' + cls + '">' + label + '</span>';
-  }}
+  function hostIcon(host) {
+    return '<div class="host-icon">' + escape(host.charAt(0).toUpperCase()) + '</div>';
+  }
 
-  function render() {{
-    const hostFilter = document.getElementById("filter-host").value.toLowerCase();
-    const svcFilter = document.getElementById("filter-service").value.toLowerCase();
-    const filtered = checksCache.filter(function(c) {{
+  function statusBadge(status) {
+    var cls = status ? "status-" + status : "status-unknown";
+    var label = status ? status.toUpperCase() : "PENDING";
+    return '<span class="status-badge ' + cls + '"><span class="dot"></span>' + label + '</span>';
+  }
+
+  function renderSummary() {
+    var counts = {};
+    checksCache.forEach(function(c) { counts[c.status || "unknown"] = (counts[c.status || "unknown"] || 0) + 1; });
+    var total = checksCache.length;
+    var html = '<div class="summary-card sc-total"><span class="count">' + total + '</span> Total</div>';
+    var order = ["ok", "warning", "critical", "unknown"];
+    order.forEach(function(s) {
+      if (counts[s]) {
+        html += '<div class="summary-card sc-' + s + '"><span class="dot"></span><span class="count">' + counts[s] + '</span> ' + s.charAt(0).toUpperCase() + s.slice(1) + '</div>';
+      }
+    });
+    document.getElementById("summary-strip").innerHTML = html;
+    document.getElementById("total-badge").textContent = total + (total === 1 ? " check" : " checks");
+  }
+
+  function render() {
+    var hostFilter = document.getElementById("filter-host").value.toLowerCase();
+    var svcFilter = document.getElementById("filter-service").value.toLowerCase();
+    var filtered = checksCache.filter(function(c) {
       return (!hostFilter || c.host.toLowerCase().includes(hostFilter))
           && (!svcFilter || c.service.toLowerCase().includes(svcFilter));
-    }});
-    document.getElementById("summary").textContent = filtered.length + " of " + checksCache.length + " checks";
-    const tbody = document.getElementById("checks-body");
-    if (filtered.length === 0) {{
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No checks match the filter</td></tr>';
+    });
+    var tbody = document.getElementById("checks-body");
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">' + (checksCache.length === 0 ? 'No checks loaded yet&hellip;' : 'No checks match the filter') + '</td></tr>';
       return;
-    }}
-    tbody.innerHTML = filtered.map(function(c) {{
-      var nextRun = c.in_flight ? "running&hellip;" : (c.next_run_delta != null ? c.next_run_delta + "s" : "&mdash;");
+    }
+    tbody.innerHTML = filtered.map(function(c) {
+      var nextRun;
+      if (c.in_flight) {
+        nextRun = '<span class="running"><span class="spinner"></span> running</span>';
+      } else if (c.next_run_delta != null) {
+        nextRun = c.next_run_delta + "s";
+      } else {
+        nextRun = "&mdash;";
+      }
       return '<tr>' +
-        '<td>' + escape(c.host) + '</td>' +
+        '<td><div class="host-cell">' + hostIcon(c.host) + escape(c.host) + '</div></td>' +
         '<td>' + escape(c.service) + '</td>' +
         '<td>' + statusBadge(c.status) + '</td>' +
-        '<td class="output-cell" title="' + escape(c.last_output) + '">' + escape(c.last_output) + '</td>' +
+        '<td class="output-cell" title="' + escape(c.last_output || '') + '">' + escape(c.last_output || '') + '</td>' +
         '<td class="count-cell">' + c.execution_count + '</td>' +
         '<td class="next-cell">' + nextRun + '</td>' +
         '</tr>';
-    }}).join("");
-  }}
+    }).join("");
+    renderSummary();
+  }
 
-  const API_URL = "__MOUNTPOINT__/api/checks";
+  var API_URL = "__MOUNTPOINT__/api/checks";
 
-  async function fetchChecks() {{
-    try {{
-      const resp = await fetch(API_URL);
-      const data = await resp.json();
+  async function fetchChecks() {
+    try {
+      var resp = await fetch(API_URL);
+      var data = await resp.json();
       checksCache = data.checks;
+      document.getElementById("last-refresh").textContent = "Updated " + new Date().toLocaleTimeString();
+      document.getElementById("error-bar").style.display = "none";
       render();
-    }} catch(e) {{
-      document.getElementById("refresh-note").textContent = "Fetch failed: " + e.message;
-    }}
-  }}
+    } catch(e) {
+      document.getElementById("error-bar").textContent = "Fetch failed: " + e.message;
+      document.getElementById("error-bar").style.display = "block";
+    }
+  }
 
   document.getElementById("filter-host").addEventListener("input", render);
   document.getElementById("filter-service").addEventListener("input", render);

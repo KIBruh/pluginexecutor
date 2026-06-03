@@ -796,3 +796,51 @@ def test_run_schedules_next_execution_after_one_interval(monkeypatch):
     executor.run()
 
     assert execution_times == pytest.approx([0.0, 60.0])
+
+
+def test_dashboard_html_template_has_no_double_braces():
+    from pluginexecutor import _web
+
+    assert "{{" not in _web.DASHBOARD_HTML
+    assert "}}" not in _web.DASHBOARD_HTML
+    assert "var counts = {};" in _web.DASHBOARD_HTML
+    assert "function renderSummary() {" in _web.DASHBOARD_HTML
+
+
+def test_dashboard_web_server_responds():
+    import threading
+    import time
+    import urllib.request
+    import urllib.error
+    from pluginexecutor import _web
+
+    check = make_check(host="host-a", service="service-a")
+    config = pluginexecutor.AppConfig(
+        checks=[check],
+        web=pluginexecutor.WebConfig(enabled=True, listen="127.0.0.1", port=19884),
+    )
+    executor = _executor.PluginExecutor(config, output_stream=io.StringIO())
+
+    server = pluginexecutor._web.StatusWebServer(executor, config.web)
+    server.start()
+    time.sleep(0.3)
+
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:19884/")
+        html = resp.read().decode()
+        assert "{{" not in html
+        assert "}}" not in html
+        assert "filter-host" in html
+        assert "summary-strip" in html
+
+        resp = urllib.request.urlopen("http://127.0.0.1:19884/api/checks")
+        data = json.loads(resp.read())
+        assert data["total"] == 1
+        assert data["checks"][0]["host"] == "host-a"
+        assert data["checks"][0]["status"] is None  # not executed yet
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen("http://127.0.0.1:19884/nonexistent")
+        assert exc.value.code == 404
+    finally:
+        server.app.close()
