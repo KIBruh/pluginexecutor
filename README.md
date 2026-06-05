@@ -24,6 +24,8 @@ pip install -e .[dev]
 checks:
 - host: localhost
   service: disk-root
+  labels:
+    team: storage
   command:
   - /usr/lib/nagios/plugins/check_disk
   - -w
@@ -58,6 +60,8 @@ checks:
 metrics:
   enabled: true
   url: https://victoriametrics.example/api/v1/import
+  labels:
+    cluster: prod
   tls_options:
     verify: true
 

@@ -11,6 +11,7 @@ from ._constants import (
     DEFAULT_ALERT_ANNOTATIONS,
     INTERNAL_ALERT_ANNOTATIONS_KEY,
     INTERNAL_TEMPLATE_CONTEXT_KEY,
+    METRIC_RESERVED_LABELS,
     OUTPUT_POLICIES,
 )
 from ._templating import render_template
@@ -131,7 +132,7 @@ def build_template_context(raw_check: dict[str, Any]) -> dict[str, Any]:
         "drop_arg": COMMAND_ARG_DROP_SENTINEL,
     }
     for key, value in raw_check.items():
-        if key in {"command", "alert_annotations", "targets"}:
+        if key in {"command", "alert_annotations", "targets", "labels"}:
             continue
         context[key] = value
     return context
@@ -171,6 +172,21 @@ def parse_alert_annotation_templates(value: Any, field_name: str) -> dict[str, s
     return annotations
 
 
+def parse_label_mapping(value: Any, field_name: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+
+    labels: dict[str, str] = {}
+    for key, label_value in value.items():
+        label_key = require_non_empty_string(key, f"{field_name} key")
+        if label_key in METRIC_RESERVED_LABELS:
+            raise ValueError(f"{field_name}.{label_key} is reserved for built-in metric labels")
+        labels[label_key] = require_non_empty_string(label_value, f"{field_name}.{label_key}")
+    return labels
+
+
 def parse_check_config(raw: Any, index: int) -> CheckConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"checks[{index}] must be a mapping")
@@ -191,6 +207,7 @@ def parse_check_config(raw: Any, index: int) -> CheckConfig:
         raw.get(INTERNAL_TEMPLATE_CONTEXT_KEY, {}),
         f"checks[{index}].{INTERNAL_TEMPLATE_CONTEXT_KEY}",
     )
+    labels = parse_label_mapping(raw.get("labels"), f"checks[{index}].labels")
     alert_annotations = parse_alert_annotation_templates(
         raw.get(INTERNAL_ALERT_ANNOTATIONS_KEY),
         f"checks[{index}].alert_annotations",
@@ -210,6 +227,7 @@ def parse_check_config(raw: Any, index: int) -> CheckConfig:
         process_perf_data=process_perf_data,
         output=output,
         template_context=template_context,
+        labels=labels,
         alert_annotations=alert_annotations,
     )
 
@@ -227,7 +245,8 @@ def parse_endpoint_config(raw: Any, field_name: str) -> EndpointConfig:
         raise ValueError(f"{field_name}.url is required when {field_name}.enabled is true")
 
     tls_options = parse_tls_options(raw.get("tls_options"), field_name)
-    return EndpointConfig(enabled=enabled, url=url, tls_options=tls_options)
+    labels = parse_label_mapping(raw.get("labels"), f"{field_name}.labels")
+    return EndpointConfig(enabled=enabled, url=url, tls_options=tls_options, labels=labels)
 
 
 def parse_web_config(raw: Any) -> WebConfig:

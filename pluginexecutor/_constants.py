@@ -6,6 +6,9 @@ import re
 STATUS_NAMES = ("ok", "warning", "critical", "unknown", "out-of-bounds")
 OUTPUT_POLICIES = frozenset({"always", "state-change", "non-ok", "never"})
 DEFAULT_ALERT_ANNOTATIONS = {"checkoutput": "{{ output_text }}"}
+METRIC_RESERVED_LABELS = frozenset(
+    {"__name__", "host", "service", "status", "perf_label", "uom", "threshold_fill"}
+)
 INTERNAL_TEMPLATE_CONTEXT_KEY = "__template_context"
 INTERNAL_ALERT_ANNOTATIONS_KEY = "__alert_annotation_templates"
 COMMAND_ARG_DROP_SENTINEL = "__PLUGINEXECUTOR_DROP_ARG__"

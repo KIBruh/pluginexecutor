@@ -20,6 +20,7 @@ class EndpointConfig:
     enabled: bool = False
     url: Optional[str] = None
     tls_options: TLSOptions = field(default_factory=TLSOptions)
+    labels: dict[str, str] = field(default_factory=dict)
 
     def requests_kwargs(self) -> dict[str, Any]:
         verify: bool | str = self.tls_options.verify
@@ -45,6 +46,7 @@ class CheckConfig:
     process_perf_data: bool = True
     output: str = "state-change"
     template_context: dict[str, Any] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)
     alert_annotations: dict[str, str] = field(
         default_factory=lambda: dict(DEFAULT_ALERT_ANNOTATIONS)
     )

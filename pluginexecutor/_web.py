@@ -534,7 +534,7 @@ class StatusWebServer:
                 "host": cfg.host,
                 "service": cfg.service,
                 "status": state.last_status,
-                "last_output": state.last_output[-500:] if state.last_output else "",
+                "last_output": state.last_output,
                 "execution_count": state.execution_count,
                 "in_flight": in_flight[i],
                 "next_run_delta": round(max(0.0, next_run_times[i] - now), 2),

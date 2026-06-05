@@ -62,8 +62,81 @@ checks:
     assert check.notification_delay == 0.0
     assert check.process_perf_data is True
     assert check.output == "state-change"
+    assert check.labels == {}
     assert config.metrics.enabled is False
+    assert config.metrics.labels == {}
     assert config.alertmanager.enabled is False
+
+
+def test_load_config_parses_metric_labels(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+checks:
+- host: localhost
+  service: ping
+  labels:
+    check_group: health
+  command:
+  - /bin/true
+  check_period: 15
+metrics:
+  enabled: true
+  url: https://victoriametrics.example/api/v1/import
+  labels:
+    cluster: prod
+    team: platform
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = pluginexecutor.load_config(config_path)
+
+    assert config.metrics.labels == {"cluster": "prod", "team": "platform"}
+    assert config.checks[0].labels == {"check_group": "health"}
+
+
+@pytest.mark.parametrize(
+    ("config_text", "match"),
+    [
+        (
+            """
+checks:
+- host: localhost
+  service: ping
+  command:
+  - /bin/true
+  check_period: 15
+metrics:
+  enabled: true
+  url: https://victoriametrics.example/api/v1/import
+  labels:
+    host: prod
+""",
+            r"metrics\.labels\.host is reserved for built-in metric labels",
+        ),
+        (
+            """
+checks:
+- host: localhost
+  service: ping
+  labels:
+    status: bad
+  command:
+  - /bin/true
+  check_period: 15
+""",
+            r"checks\[0\]\.labels\.status is reserved for built-in metric labels",
+        ),
+    ],
+)
+def test_load_config_rejects_reserved_metric_labels(tmp_path, config_text, match):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_text.strip() + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        pluginexecutor.load_config(config_path)
 
 
 def test_load_config_rejects_invalid_output(tmp_path):
@@ -506,6 +579,24 @@ def test_build_victoriametrics_lines_include_status_and_perfdata():
     assert warning_status[0]["values"] == [1]
 
 
+def test_build_victoriametrics_lines_include_global_and_check_labels():
+    check = make_check(labels={"team": "db", "role": "primary"})
+    state = pluginexecutor.CheckState(execution_count=1)
+    result = make_result()
+    metrics_config = pluginexecutor.EndpointConfig(
+        labels={"cluster": "prod", "team": "platform"}
+    )
+
+    lines = pluginexecutor.VictoriaMetricsClient.build_lines(check, state, result, metrics_config)
+    payloads = [json.loads(line) for line in lines]
+
+    for payload in payloads:
+        metric = payload["metric"]
+        assert metric["cluster"] == "prod"
+        assert metric["team"] == "db"
+        assert metric["role"] == "primary"
+
+
 def test_build_victoriametrics_lines_skip_non_numeric_warn_and_crit():
     check = make_check()
     state = pluginexecutor.CheckState(execution_count=1)
@@ -825,6 +916,8 @@ def test_dashboard_web_server_responds():
     server.start()
     time.sleep(0.3)
 
+    executor.states[0].last_output = "line one\nline two\n" + ("x" * 600)
+
     try:
         resp = urllib.request.urlopen("http://127.0.0.1:19884/")
         html = resp.read().decode()
@@ -838,6 +931,7 @@ def test_dashboard_web_server_responds():
         assert data["total"] == 1
         assert data["checks"][0]["host"] == "host-a"
         assert data["checks"][0]["status"] is None  # not executed yet
+        assert data["checks"][0]["last_output"] == "line one\nline two\n" + ("x" * 600)
 
         with pytest.raises(urllib.error.HTTPError) as exc:
             urllib.request.urlopen("http://127.0.0.1:19884/nonexistent")

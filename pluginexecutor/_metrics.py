@@ -18,7 +18,7 @@ class VictoriaMetricsClient:
         if not self.config.enabled or not self.config.url:
             return
 
-        lines = self.build_lines(check, state, result)
+        lines = self.build_lines(check, state, result, self.config)
         payload = "\n".join(lines)
         response = self.session.post(
             self.config.url,
@@ -30,9 +30,15 @@ class VictoriaMetricsClient:
         response.raise_for_status()
 
     @staticmethod
-    def build_lines(check: CheckConfig, state: CheckState, result: CheckResult) -> list[str]:
+    def build_lines(
+        check: CheckConfig,
+        state: CheckState,
+        result: CheckResult,
+        config: Optional[EndpointConfig] = None,
+    ) -> list[str]:
         timestamp_ms = int(result.finished_at.timestamp() * 1000)
-        base_labels = {"host": check.host, "service": check.service}
+        metric_labels = build_metric_labels(config, check)
+        base_labels = {**metric_labels, "host": check.host, "service": check.service}
         lines = [
             build_metric_line(
                 "check_executions_total",
@@ -127,6 +133,14 @@ class VictoriaMetricsClient:
                     )
 
         return lines
+
+
+def build_metric_labels(config: Optional[EndpointConfig], check: CheckConfig) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    if config is not None:
+        labels.update(config.labels)
+    labels.update(check.labels)
+    return labels
 
 
 def build_metric_line(
