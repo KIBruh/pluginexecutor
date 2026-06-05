@@ -19,7 +19,11 @@ jobs:
       - name: Validate ref
         id: validate
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9.]+$ ]]; then
+          is_supported_tag() {
+            [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]
+          }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && ! is_supported_tag; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -56,6 +60,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4.1.0
@@ -73,10 +80,30 @@ jobs:
       - name: Lowercase image name
         run: echo "IMAGE_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
+      - name: Compute image tags
+        id: tags
+        run: |
+          image="${REGISTRY}/${IMAGE_LOWER}"
+          tags="${image}:${GITHUB_REF_NAME}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            highest_stable_tag="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+
+            if [ -n "${highest_stable_tag}" ] && [ "${GITHUB_REF_NAME}" = "${highest_stable_tag}" ]; then
+              tags="${tags}"$'\n'"${image}:latest"
+            fi
+          fi
+
+          {
+            echo 'tags<<EOF'
+            echo "${tags}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7.2.0
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_LOWER }}:${{ github.ref_name }}
+          tags: ${{ steps.tags.outputs.tags }}
