@@ -3,13 +3,32 @@ name: Build and push image
 on:
   push:
     branches: [main]
+    tags:
+      - 'v[0-9]*'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  validate_ref:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.validate.outputs.should_run }}
+    steps:
+      - name: Validate ref
+        id: validate
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9.]+$ ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: [validate_ref]
+    if: needs.validate_ref.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -29,7 +48,8 @@ jobs:
         run: pytest
 
   build:
-    needs: [test]
+    needs: [validate_ref, test]
+    if: needs.validate_ref.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,4 +79,4 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_LOWER }}:main
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_LOWER }}:${{ github.ref_name }}
