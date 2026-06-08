@@ -56,7 +56,7 @@ class LokiClient:
                 {
                     "stream": stream_labels,
                     "values": [
-                        [ts_ns, result.output_text, metadata],
+                        [ts_ns, result.stdout, metadata],
                     ],
                 }
             ]
