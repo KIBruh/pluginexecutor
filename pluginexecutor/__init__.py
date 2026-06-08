@@ -7,6 +7,7 @@ from ._cli import main, parse_args
 from ._config import load_config
 from ._executor import PluginExecutor
 from ._metrics import VictoriaMetricsClient
+from ._loki import LokiClient
 from ._types import (
     AppConfig,
     CheckConfig,
@@ -29,6 +30,7 @@ __all__ = [
     "PluginExecutor",
     "TLSOptions",
     "VictoriaMetricsClient",
+    "LokiClient",
     "WebConfig",
     "load_config",
     "main",

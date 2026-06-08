@@ -86,6 +86,11 @@ metrics:
   labels:
     cluster: prod
     team: platform
+loki:
+  enabled: true
+  url: https://loki.example/loki/api/v1/push
+  labels:
+    environment: prod
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -94,6 +99,7 @@ metrics:
     config = pluginexecutor.load_config(config_path)
 
     assert config.metrics.labels == {"cluster": "prod", "team": "platform"}
+    assert config.loki.labels == {"environment": "prod"}
     assert config.checks[0].labels == {"check_group": "health"}
 
 
@@ -531,6 +537,27 @@ def test_should_log_output():
     assert _logging.should_log_output("never", None, "critical") is False
 
 
+def test_build_loki_payload_includes_labels_and_metadata():
+    check = make_check(labels={"team": "db"})
+    result = make_result(status="critical", output_text="disk full")
+    loki_cfg = pluginexecutor.EndpointConfig(labels={"cluster": "prod"})
+
+    payload = pluginexecutor.LokiClient.build_payload(check, result, loki_cfg)
+    assert "streams" in payload and len(payload["streams"]) == 1
+    stream = payload["streams"][0]
+    assert stream["stream"]["host"] == check.host
+    assert stream["stream"]["service"] == check.service
+    assert stream["stream"]["cluster"] == "prod"
+    assert stream["stream"]["team"] == "db"
+    vals = stream["values"]
+    assert len(vals) == 1 and len(vals[0]) == 3
+    ts, line, meta = vals[0]
+    assert isinstance(ts, str) and ts.isdigit()
+    assert line == "disk full"
+    assert meta["status"] == "critical"
+    assert isinstance(meta["duration_seconds"], str)
+
+
 def test_build_victoriametrics_lines_include_status_and_perfdata():
     check = make_check()
     state = pluginexecutor.CheckState(execution_count=3)
@@ -796,7 +823,7 @@ def test_execute_check_maps_timeout_to_unknown(monkeypatch):
     assert "timed out" in result.stderr
 
 
-def test_run_once_logs_and_sends_metrics(monkeypatch):
+def test_run_once_logs_and_sends_metrics_and_loki(monkeypatch):
     check = make_check(output="always")
     config = pluginexecutor.AppConfig(checks=[check])
     state = pluginexecutor.CheckState()
@@ -805,19 +832,26 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
     class MetricsStub:
         def __init__(self):
             self.calls = []
-
         def send_result(self, check_arg, state_arg, result_arg):
             self.calls.append((check_arg, state_arg.execution_count, result_arg.status))
+
+    class LokiStub:
+        def __init__(self):
+            self.calls = 0
+        def send_result(self, check_arg, state_arg, result_arg):
+            self.calls += 1
 
     class AlertStub:
         def send_alerts(self, alerts):
             self.alerts = alerts
 
     metrics = MetricsStub()
+    loki = LokiStub()
     executor = pluginexecutor.PluginExecutor(
         config,
         metrics_client=metrics,
         alertmanager_client=AlertStub(),
+        loki_client=loki,
         output_stream=output_stream,
     )
     monkeypatch.setattr(
@@ -830,6 +864,7 @@ def test_run_once_logs_and_sends_metrics(monkeypatch):
 
     assert state.execution_count == 1
     assert metrics.calls == [(check, 1, "ok")]
+    assert loki.calls == 1
     assert "status=ok" in output_stream.getvalue()
 
 

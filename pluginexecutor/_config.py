@@ -32,6 +32,7 @@ def load_config(path: str | Path) -> AppConfig:
     checks = [parse_check_config(item, index) for index, item in enumerate(normalized_checks)]
     metrics = parse_endpoint_config(raw.get("metrics"), "metrics")
     alertmanager = parse_endpoint_config(raw.get("alertmanager"), "alertmanager")
+    loki = parse_endpoint_config(raw.get("loki"), "loki")
     max_workers = raw.get("max_workers", 10)
     if not isinstance(max_workers, int) or max_workers < 1:
         raise ValueError("max_workers must be a positive integer")
@@ -40,6 +41,7 @@ def load_config(path: str | Path) -> AppConfig:
         checks=checks,
         metrics=metrics,
         alertmanager=alertmanager,
+        loki=loki,
         web=web,
         max_workers=max_workers,
     )

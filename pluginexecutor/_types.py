@@ -65,6 +65,7 @@ class AppConfig:
     checks: list[CheckConfig]
     metrics: EndpointConfig = field(default_factory=EndpointConfig)
     alertmanager: EndpointConfig = field(default_factory=EndpointConfig)
+    loki: EndpointConfig = field(default_factory=EndpointConfig)
     web: WebConfig = field(default_factory=WebConfig)
     max_workers: int = 10
 

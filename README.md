@@ -2,7 +2,7 @@
 
 `pluginexecutor` is a small Python daemon for running a few Naemon-compatible plugins from YAML.
 
-It executes checks on a schedule, writes result lines to stdout, sends check metrics to VictoriaMetrics JSON-line import, and sends delayed alerts to Alertmanager.
+It executes checks on a schedule, writes result lines to stdout, sends check metrics to VictoriaMetrics JSON-line import, sends check output to Loki, and sends delayed alerts to Alertmanager.
 
 ## Install
 
@@ -70,7 +70,30 @@ alertmanager:
   url: https://alertmanager.example
   tls_options:
     verify: true
+
+loki:
+  enabled: true
+  url: https://loki.example/loki/api/v1/push
+  labels:
+    cluster: prod
 ```
+
+## Logs (Loki)
+
+When `loki.enabled` is true, the executor POSTs JSON to the configured Loki push URL (`/loki/api/v1/push`).
+
+- The executor always pushes to Loki for every check execution, regardless of the `output` policy used for stdout.
+- Stream labels are built from global `loki.labels` and per-check `labels`, plus `host` and `service`.
+- Each pushed entry includes structured metadata with `status`, `exit_code`, and `duration_seconds` as flat strings.
+- Avoid high-cardinality labels such as request IDs in `loki.labels` or `checks[*].labels`.
+
+Example query in Loki:
+
+```bash
+curl -G -s "http://localhost:3100/loki/api/v1/query" \
+  --data-urlencode 'query={host="localhost",service="disk-root"}' | jq
+```
+
 
 ## Run
 

@@ -13,6 +13,7 @@ import requests
 from ._alerting import AlertmanagerClient, render_alert_annotations
 from ._logging import build_log_line, emit_internal_log, should_log_output
 from ._metrics import VictoriaMetricsClient
+from ._loki import LokiClient
 from ._plugin import compute_check_interval, execute_check
 from ._types import AppConfig, CheckConfig, CheckResult, CheckState
 
@@ -23,11 +24,13 @@ class PluginExecutor:
         config: AppConfig,
         metrics_client: Optional[VictoriaMetricsClient] = None,
         alertmanager_client: Optional[AlertmanagerClient] = None,
+        loki_client: Optional[LokiClient] = None,
         output_stream: Any = None,
     ) -> None:
         self.config = config
         self.metrics_client = metrics_client or VictoriaMetricsClient(config.metrics)
         self.alertmanager_client = alertmanager_client or AlertmanagerClient(config.alertmanager)
+        self.loki_client = loki_client or LokiClient(config.loki)
         self.output_stream = output_stream or sys.stdout
         self.stop_event = threading.Event()
         self.states = [CheckState() for _ in config.checks]
@@ -103,6 +106,15 @@ class PluginExecutor:
 
         if should_log_output(check.output, state.last_status, result.status):
             print(build_log_line(check, result), file=self.output_stream, flush=True)
+
+        # Always push to Loki regardless of output policy
+        try:
+            self.loki_client.send_result(check, state, result)
+        except requests.RequestException as exc:
+            emit_internal_log(
+                f"loki delivery failed for {check.host}/{check.service}: {exc}",
+                stream=self.output_stream,
+            )
 
         try:
             self.metrics_client.send_result(check, state, result)
